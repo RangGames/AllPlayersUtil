@@ -1,7 +1,7 @@
 {
   "id": "all-players-util",
   "name": "AllPlayersUtil",
-  "version": "2.0.4.6-SNAPSHOT",
+  "version": "2.0.4.7-SNAPSHOT",
   "description": "Network-wide player tracking utility",
   "authors": ["rang"],
   "main": "rang.games.allPlayersUtil.AllPlayersUtil",

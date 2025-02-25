@@ -15,6 +15,7 @@ public class BukkitMain extends JavaPlugin {
     private RedisClient redisClient;
     private PurpurHandler platformHandler;
     private String serverName;
+
     @Override
     public void onEnable() {
         try {
@@ -44,6 +45,7 @@ public class BukkitMain extends JavaPlugin {
             e.printStackTrace();
         }
     }
+
     @Override
     public void onDisable() {
         try {

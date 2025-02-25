@@ -16,11 +16,24 @@ public class NetworkQuitEvent extends Event {
 
     }
 
-    public String getPlayerUuid() { return playerUuid; }
-    public String getPlayerName() { return playerName; }
-    public String getServerName() { return serverName; }
+    public String getPlayerUuid() {
+        return playerUuid;
+    }
+
+    public String getPlayerName() {
+        return playerName;
+    }
+
+    public String getServerName() {
+        return serverName;
+    }
 
     @Override
-    public HandlerList getHandlers() { return HANDLERS; }
-    public static HandlerList getHandlerList() { return HANDLERS; }
+    public HandlerList getHandlers() {
+        return HANDLERS;
+    }
+
+    public static HandlerList getHandlerList() {
+        return HANDLERS;
+    }
 }

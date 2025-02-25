@@ -14,6 +14,7 @@ public class VelocitySchedulerService implements RedisClient.SchedulerService {
         this.server = server;
         this.plugin = plugin;
     }
+
     @Override
     public Object scheduleAsyncRepeatingTask(Runnable task, long initialDelay, long period) {
         return server.getScheduler()
@@ -22,12 +23,14 @@ public class VelocitySchedulerService implements RedisClient.SchedulerService {
                 .delay(Duration.ofMillis(initialDelay))
                 .schedule();
     }
+
     @Override
     public void executePlatformEvent(RedisClient.NetworkEventListener listener, RedisClient.NetworkEventType type, String uuid, String name, String fromServer, String toServer) {
         server.getScheduler().buildTask(plugin, () ->
                 listener.onNetworkEvent(type, uuid, name, fromServer, toServer)
         ).schedule();
     }
+
     @Override
     public void cancelTask(Object task) {
         if (task instanceof ScheduledTask) {

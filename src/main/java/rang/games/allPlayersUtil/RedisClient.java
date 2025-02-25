@@ -34,9 +34,12 @@ public class RedisClient {
 
     public interface SchedulerService {
         Object scheduleAsyncRepeatingTask(Runnable task, long initialDelay, long period);
+
         void executePlatformEvent(NetworkEventListener listener, NetworkEventType type, String uuid, String name, String fromServer, String toServer);
+
         void cancelTask(Object task);
     }
+
     public enum NetworkEventType {
         NETWORK_JOIN,
         NETWORK_QUIT,
@@ -56,6 +59,7 @@ public class RedisClient {
         RedisClient.plugin = plugin;
         RedisClient.scheduler = scheduler;
     }
+
     private RedisClient(String host, int port, Object plugin, SchedulerService scheduler) {
         this.host = host;
         this.port = port;
@@ -101,6 +105,7 @@ public class RedisClient {
             throw new IllegalStateException("RedisClient must be initialized first!");
         }
     }
+
     private void startSubscriber() {
         if (isShuttingDown.get() || !isInitialized.get()) {
             return;
@@ -147,6 +152,7 @@ public class RedisClient {
             }
         }, 30000, 30000);
     }
+
     private void reconnectIfNeeded() {
         if (jedisPool != null && !jedisPool.isClosed()) {
             try (Jedis jedis = jedisPool.getResource()) {
@@ -169,6 +175,7 @@ public class RedisClient {
 
     /**
      * 서버의 상태를 Redis에 업데이트합니다.
+     *
      * @param serverName 서버 이름
      * @return CompletableFuture<Void>
      */
@@ -227,8 +234,14 @@ public class RedisClient {
             }
         });
     }
-    public String getHost() { return host; }
-    public int getPort() { return port; }
+
+    public String getHost() {
+        return host;
+    }
+
+    public int getPort() {
+        return port;
+    }
 
     private <T> CompletableFuture<T> trackTask(CompletableFuture<T> future) {
         if (!isShuttingDown.get()) {
@@ -315,6 +328,7 @@ public class RedisClient {
             logger.warning("Error processing message: " + e.getMessage());
         }
     }
+
     private void handleSubscriptionError(Exception e, AtomicInteger attempts, AtomicBoolean taskShouldRun) {
         int currentAttempt = attempts.incrementAndGet();
         logger.severe(String.format("Redis connection attempt %d/%d failed: %s",
@@ -329,7 +343,8 @@ public class RedisClient {
         if (pubSub != null && pubSub.isSubscribed()) {
             try {
                 pubSub.unsubscribe();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
     }
 
@@ -362,9 +377,11 @@ public class RedisClient {
         }));
 
     }
+
     public JedisPool getJedisPool() {
         return this.jedisPool;
     }
+
     public CompletableFuture<Void> publishNetworkQuit(String uuid, String playerName, String serverName) {
         //logger.info("Publishing network quit: UUID=" + uuid + ", Name=" + playerName + ", Server=" + serverName);
 
@@ -400,6 +417,7 @@ public class RedisClient {
             }
         }));
     }
+
     public CompletableFuture<Void> addPlayerAsync(String uuid, String serverName) {
         return trackTask(CompletableFuture.runAsync(() -> {
             try (Jedis jedis = jedisPool.getResource()) {
@@ -415,6 +433,7 @@ public class RedisClient {
             }
         }));
     }
+
     public CompletableFuture<Void> removePlayerAsync(String uuid, String serverName) {
         return trackTask(CompletableFuture.runAsync(() -> {
             try (Jedis jedis = jedisPool.getResource()) {
@@ -423,9 +442,11 @@ public class RedisClient {
             }
         }));
     }
+
     public CompletableFuture<Boolean> isServerOnline(String serverName) {
         return playerAPI.isServerOnline(serverName);
     }
+
     public CompletableFuture<Set<String>> getOnlinePlayersAsync() {
         return playerAPI.getOnlinePlayersAsync();
     }
@@ -442,6 +463,11 @@ public class RedisClient {
         return CompletableFuture.runAsync(() -> {
             try (Jedis jedis = jedisPool.getResource()) {
                 jedis.del("server:" + serverName);
+                jedis.del("server_status:" + serverName);
+
+                logger.info("Cleaned up Redis keys for server: " + serverName);
+            } catch (Exception e) {
+                logger.severe("Error cleaning up server keys: " + e.getMessage());
             }
         });
     }

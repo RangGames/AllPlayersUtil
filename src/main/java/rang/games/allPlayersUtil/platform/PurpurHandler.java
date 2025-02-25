@@ -110,6 +110,7 @@ public class PurpurHandler implements PlatformHandler {
             HandlerList.unregisterAll(this.listener);
         }
     }
+
     @Override
     public void registerEvents() {
         plugin.getLogger().info("§aRegistering events for server: " + serverName);
@@ -130,7 +131,6 @@ public class PurpurHandler implements PlatformHandler {
     private void startPlayerUpdateTask() {
         playerUpdateTask = Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, () -> {
             if (!isEnabled) return;
-
             Bukkit.getOnlinePlayers().forEach(player -> {
                 String uuid = player.getUniqueId().toString();
                 redisClient.addPlayerAsync(uuid, serverName)
@@ -144,8 +144,7 @@ public class PurpurHandler implements PlatformHandler {
                         plugin.getLogger().severe("Error updating server status: " + throwable.getMessage());
                         return null;
                     });
-        }, 1200L, 1200L);
-
+        }, 100L, 600L);
     }
 
     private static class BukkitListener implements Listener {
@@ -169,6 +168,7 @@ public class PurpurHandler implements PlatformHandler {
         public void setEnabled(boolean enabled) {
             this.isEnabled = enabled;
         }
+
         /*
                 @EventHandler
                 public void onPlayerJoin(PlayerJoinEvent event) {
@@ -219,6 +219,7 @@ public class PurpurHandler implements PlatformHandler {
                 });
             }
         }
+
         @EventHandler
         public void onPlayerQuit(PlayerQuitEvent event) {
             if (!isEnabled) return;

@@ -13,10 +13,20 @@ public class NetworkJoinEvent extends Event {
         this.playerName = playerName;
     }
 
-    public String getPlayerUuid() { return playerUuid; }
-    public String getPlayerName() { return playerName; }
+    public String getPlayerUuid() {
+        return playerUuid;
+    }
+
+    public String getPlayerName() {
+        return playerName;
+    }
 
     @Override
-    public HandlerList getHandlers() { return HANDLERS; }
-    public static HandlerList getHandlerList() { return HANDLERS; }
+    public HandlerList getHandlers() {
+        return HANDLERS;
+    }
+
+    public static HandlerList getHandlerList() {
+        return HANDLERS;
+    }
 }

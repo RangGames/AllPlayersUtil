@@ -28,7 +28,7 @@ import java.util.logging.Logger;
 @Plugin(
         id = "all-players-util",
         name = "AllPlayersUtil",
-        version = "2.0.4.6-SNAPSHOT",
+        version = "2.0.4.7-SNAPSHOT",
         description = "Network-wide player tracking utility",
         authors = {"rang"}
 )
@@ -81,6 +81,8 @@ public class VelocityMain {
                 String serverName = config.getProperty("server_name", "proxy");
 
                 try (Jedis jedis = redisClient.getJedisPool().getResource()) {
+                    jedis.del("server_status:" + serverName);
+
                     Set<String> players = jedis.smembers("server:" + serverName);
 
                     if (!players.isEmpty()) {
@@ -95,6 +97,7 @@ public class VelocityMain {
                         transaction.exec();
                     }
                 }
+                redisClient.cleanupServerAsync(serverName).get(5, TimeUnit.SECONDS);
                 redisClient.shutdown().get(5, TimeUnit.SECONDS);
                 logger.info("AllPlayersUtil shutdown completed successfully");
             } catch (TimeoutException e) {

@@ -11,6 +11,7 @@ public class BukkitSchedulerService implements RedisClient.SchedulerService {
     public BukkitSchedulerService(JavaPlugin plugin) {
         this.plugin = plugin;
     }
+
     @Override
     public Object scheduleAsyncRepeatingTask(Runnable task, long initialDelay, long period) {
         return new BukkitRunnable() {
@@ -20,6 +21,7 @@ public class BukkitSchedulerService implements RedisClient.SchedulerService {
             }
         }.runTaskTimerAsynchronously(plugin, initialDelay / 50, period / 50);
     }
+
     @Override
     public void executePlatformEvent(RedisClient.NetworkEventListener listener, RedisClient.NetworkEventType type, String uuid, String name, String fromServer, String toServer) {
         new BukkitRunnable() {
@@ -29,6 +31,7 @@ public class BukkitSchedulerService implements RedisClient.SchedulerService {
             }
         }.runTask(plugin);
     }
+
     @Override
     public void cancelTask(Object task) {
         if (task instanceof BukkitTask) {

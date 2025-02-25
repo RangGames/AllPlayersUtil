@@ -17,12 +17,28 @@ public class ServerSwitchEvent extends Event {
         this.toServer = toServer;
     }
 
-    public String getPlayerUuid() { return playerUuid; }
-    public String getPlayerName() { return playerName; }
-    public String getFromServer() { return fromServer; }
-    public String getToServer() { return toServer; }
+    public String getPlayerUuid() {
+        return playerUuid;
+    }
+
+    public String getPlayerName() {
+        return playerName;
+    }
+
+    public String getFromServer() {
+        return fromServer;
+    }
+
+    public String getToServer() {
+        return toServer;
+    }
 
     @Override
-    public HandlerList getHandlers() { return HANDLERS; }
-    public static HandlerList getHandlerList() { return HANDLERS; }
+    public HandlerList getHandlers() {
+        return HANDLERS;
+    }
+
+    public static HandlerList getHandlerList() {
+        return HANDLERS;
+    }
 }

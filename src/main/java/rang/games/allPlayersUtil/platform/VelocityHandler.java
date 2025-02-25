@@ -12,6 +12,7 @@ import redis.clients.jedis.Transaction;
 
 import java.util.Set;
 import java.util.logging.Logger;
+
 public class VelocityHandler implements PlatformHandler {
     private final ProxyServer server;
     private final Object plugin;
@@ -61,6 +62,7 @@ public class VelocityHandler implements PlatformHandler {
             }
         }
     }
+
     @Subscribe
     public void onLogin(LoginEvent event) {
         if (!isEnabled) return;

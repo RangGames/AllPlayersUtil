@@ -62,6 +62,7 @@ public final class AllPlayersUtil {
     public void onBukkitDisable(org.bukkit.plugin.java.JavaPlugin plugin) {
         disable();
     }
+
     private void enable() {
         createDefaultConfig();
 
@@ -80,17 +81,18 @@ public final class AllPlayersUtil {
                 redisPort,
                 plugin,
                 isVelocity ?
-                        new VelocitySchedulerService((ProxyServer)proxyServer, plugin) :
-                        new BukkitSchedulerService((org.bukkit.plugin.java.JavaPlugin)plugin));
+                        new VelocitySchedulerService((ProxyServer) proxyServer, plugin) :
+                        new BukkitSchedulerService((org.bukkit.plugin.java.JavaPlugin) plugin));
         this.redisClient = RedisClient.getInstance();
         this.platformHandler = isVelocity ?
                 new VelocityHandler(proxyServer, plugin, logger) :
-                new PurpurHandler((org.bukkit.plugin.java.JavaPlugin)plugin);
+                new PurpurHandler((org.bukkit.plugin.java.JavaPlugin) plugin);
         platformHandler.initialize(redisClient, serverName);
         platformHandler.registerEvents();
 
         logger.info("AllPlayersUtil has been enabled!");
     }
+
     private void disable() {
         if (redisClient != null) {
             Config config = loadConfig();
@@ -99,6 +101,7 @@ public final class AllPlayersUtil {
         }
         logger.info("AllPlayersUtil has been disabled!");
     }
+
     private void createDefaultConfig() {
         try {
             if (!Files.exists(dataDirectory)) {
@@ -128,9 +131,11 @@ public final class AllPlayersUtil {
             logger.severe("Could not create config file: " + e.getMessage());
         }
     }
+
     private Config loadConfig() {
         return new Config(dataDirectory.resolve("config.yml").toFile());
     }
+
     private static class Config {
         private final Properties properties = new Properties();
         private org.bukkit.configuration.file.YamlConfiguration bukkitConfig;
@@ -161,6 +166,7 @@ public final class AllPlayersUtil {
                 e.printStackTrace();
             }
         }
+
         public boolean isDebugEnabled() {
             if (isVelocity) {
                 return Boolean.parseBoolean(properties.getProperty("debug", "false"));
@@ -168,6 +174,7 @@ public final class AllPlayersUtil {
                 return bukkitConfig.getBoolean("debug", false);
             }
         }
+
         public String getString(String path, String def) {
             if (isVelocity) {
                 return properties.getProperty(path.replace(".", "_"), def);
@@ -188,6 +195,7 @@ public final class AllPlayersUtil {
             }
         }
     }
+
     public static final class BukkitMain extends org.bukkit.plugin.java.JavaPlugin {
         private AllPlayersUtil plugin;
 

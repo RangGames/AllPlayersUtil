@@ -41,7 +41,7 @@ public class RedisPlayerAPI {
     /**
      * 현재 네트워크의 모든 온라인 플레이어 UUID를 가져옵니다.
      *
-     * @return CompletableFuture<Set<String>> - 온라인 플레이어 UUID 세트
+     * @return CompletableFuture<Set < String>> - 온라인 플레이어 UUID 세트
      */
 /*    public CompletableFuture<Set<String>> getOnlinePlayersAsync() {
         return CompletableFuture.supplyAsync(() -> {
@@ -73,13 +73,21 @@ public class RedisPlayerAPI {
             try (Jedis jedis = jedisPool.getResource()) {
                 String key = "server_status:" + serverName;
                 String status = jedis.get(key);
-                return "online".equals(status);
+                if ("online".equals(status)) {
+                    long ttl = jedis.ttl(key);
+                    if (ttl <= 0) {
+                        return false; // status key exists but has no TTL, considering offline
+                    }
+                    return true;
+                }
+                return false;
             } catch (Exception e) {
                 logger.severe("Error checking server status: " + e.getMessage());
                 return false;
             }
         });
     }
+
     public CompletableFuture<Set<String>> getOnlinePlayersAsync() {
         return CompletableFuture.supplyAsync(() -> {
             try (Jedis jedis = jedisPool.getResource()) {
@@ -109,7 +117,7 @@ public class RedisPlayerAPI {
      * 특정 서버의 모든 플레이어 UUID를 가져옵니다.
      *
      * @param serverName 서버 이름
-     * @return CompletableFuture<Set<String>> - 해당 서버의 플레이어 UUID 세트
+     * @return CompletableFuture<Set < String>> - 해당 서버의 플레이어 UUID 세트
      */
     public CompletableFuture<Set<String>> getServerPlayersAsync(String serverName) {
         return CompletableFuture.supplyAsync(() -> {
