@@ -28,7 +28,7 @@ import java.util.logging.Logger;
 @Plugin(
         id = "all-players-util",
         name = "AllPlayersUtil",
-        version = "2.0.4.4-SNAPSHOT",
+        version = "2.0.4.6-SNAPSHOT",
         description = "Network-wide player tracking utility",
         authors = {"rang"}
 )

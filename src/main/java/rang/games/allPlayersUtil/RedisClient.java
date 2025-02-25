@@ -136,10 +136,16 @@ public class RedisClient {
                 if (jedis.exists("online_players")) {
                     jedis.expire("online_players", 300);
                 }
+                Set<String> serverStatusKeys = jedis.keys("server_status:*");
+                for (String statusKey : serverStatusKeys) {
+                    if (jedis.exists(statusKey)) {
+                        jedis.expire(statusKey, 45);
+                    }
+                }
             } catch (Exception e) {
                 logger.severe("Error refreshing Redis keys: " + e.getMessage());
             }
-        }, 60000, 60000);
+        }, 30000, 30000);
     }
     private void reconnectIfNeeded() {
         if (jedisPool != null && !jedisPool.isClosed()) {
@@ -159,6 +165,24 @@ public class RedisClient {
                 }
             }
         }
+    }
+
+    /**
+     * 서버의 상태를 Redis에 업데이트합니다.
+     * @param serverName 서버 이름
+     * @return CompletableFuture<Void>
+     */
+    public CompletableFuture<Void> updateServerStatus(String serverName) {
+        return CompletableFuture.runAsync(() -> {
+            try (Jedis jedis = jedisPool.getResource()) {
+                String key = "server_status:" + serverName;
+                jedis.set(key, "online");
+                jedis.expire(key, 45); // 45초 TTL
+            } catch (Exception e) {
+                logger.severe("Error updating server status: " + e.getMessage());
+                throw new CompletionException(e);
+            }
+        });
     }
 
     private void createNewPool() {
@@ -399,7 +423,9 @@ public class RedisClient {
             }
         }));
     }
-
+    public CompletableFuture<Boolean> isServerOnline(String serverName) {
+        return playerAPI.isServerOnline(serverName);
+    }
     public CompletableFuture<Set<String>> getOnlinePlayersAsync() {
         return playerAPI.getOnlinePlayersAsync();
     }

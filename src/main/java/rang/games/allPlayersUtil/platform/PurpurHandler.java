@@ -12,7 +12,10 @@ import rang.games.allPlayersUtil.RedisClient;
 import rang.games.allPlayersUtil.event.NetworkJoinEvent;
 import rang.games.allPlayersUtil.event.NetworkQuitEvent;
 import rang.games.allPlayersUtil.event.ServerSwitchEvent;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Transaction;
 
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -81,6 +84,21 @@ public class PurpurHandler implements PlatformHandler {
     public void disable() {
         this.isEnabled = false;
         if (this.redisClient != null) {
+            try (Jedis jedis = redisClient.getJedisPool().getResource()) {
+                jedis.del("server_status:" + serverName);
+
+                Set<String> players = jedis.smembers("server:" + serverName);
+                if (!players.isEmpty()) {
+                    Transaction transaction = jedis.multi();
+                    for (String uuid : players) {
+                        transaction.srem("server:" + serverName, uuid);
+                        transaction.srem("online_players", uuid);
+                    }
+                    transaction.del("server:" + serverName);
+                    transaction.exec();
+                }
+            }
+
             this.redisClient.removeListener(null);
             try {
                 this.redisClient.shutdown().get(5, TimeUnit.SECONDS);
@@ -121,7 +139,13 @@ public class PurpurHandler implements PlatformHandler {
                             return null;
                         });
             });
+            redisClient.updateServerStatus(serverName)
+                    .exceptionally(throwable -> {
+                        plugin.getLogger().severe("Error updating server status: " + throwable.getMessage());
+                        return null;
+                    });
         }, 1200L, 1200L);
+
     }
 
     private static class BukkitListener implements Listener {

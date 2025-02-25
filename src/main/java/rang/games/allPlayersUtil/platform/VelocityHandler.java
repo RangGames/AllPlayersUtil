@@ -116,6 +116,43 @@ public class VelocityHandler implements PlatformHandler {
         }
     }
 
+    @Subscribe
+    public void onServerConnected(ServerConnectedEvent event) {
+        if (!isEnabled) return;
+
+        String uuid = event.getPlayer().getUniqueId().toString();
+        String name = event.getPlayer().getUsername();
+        String toServer = event.getServer().getServerInfo().getName();
+        if (event.getPreviousServer().isPresent()) {
+            String fromServer = event.getPreviousServer().get().getServerInfo().getName();
+            //this.logger.info("§eServer switch event detected for: " + event.getPlayer().getUsername());
+            if (this.redisClient != null) {
+                this.redisClient.publishServerSwitch(uuid, name, fromServer, toServer).thenRun(() -> {
+                    //this.logger.info("§aPublished server switch event for " + name);
+                }).exceptionally((throwable) -> {
+                    this.logger.severe("§cError publishing server switch: " + throwable.getMessage());
+                    return null;
+                });
+            }
+        }
+
+        if (this.redisClient != null) {
+            this.redisClient.addPlayerAsync(uuid, toServer).thenRun(() -> {
+                if (event.getPreviousServer().isPresent()) {
+                    String fromServer = event.getPreviousServer().get().getServerInfo().getName();
+                    this.redisClient.removePlayerAsync(uuid, fromServer).thenRun(() -> {
+                        //this.logger.info("§aPlayer " + name + " moved from " + fromServer + " to " + toServer);
+                    });
+                }
+
+            }).exceptionally((throwable) -> {
+                this.logger.severe("§cError updating player location: " + throwable.getMessage());
+                return null;
+            });
+        }
+
+
+    }
 
     @Override
     public void broadcast(String message) {

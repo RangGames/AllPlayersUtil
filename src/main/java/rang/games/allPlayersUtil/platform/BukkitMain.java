@@ -3,7 +3,10 @@ package rang.games.allPlayersUtil.platform;
 import org.bukkit.plugin.java.JavaPlugin;
 import rang.games.allPlayersUtil.AllPlayersUtilCore;
 import rang.games.allPlayersUtil.RedisClient;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Transaction;
 
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 public class BukkitMain extends JavaPlugin {
@@ -45,6 +48,21 @@ public class BukkitMain extends JavaPlugin {
     public void onDisable() {
         try {
             if (redisClient != null) {
+                try (Jedis jedis = redisClient.getJedisPool().getResource()) {
+                    jedis.del("server_status:" + serverName);
+
+                    Set<String> players = jedis.smembers("server:" + serverName);
+                    if (!players.isEmpty()) {
+                        Transaction transaction = jedis.multi();
+                        for (String uuid : players) {
+                            transaction.srem("server:" + serverName, uuid);
+                            transaction.srem("online_players", uuid);
+                        }
+                        transaction.del("server:" + serverName);
+                        transaction.exec();
+                    }
+                }
+
                 if (serverName != null) {
                     redisClient.cleanupServerAsync(serverName).get(5, TimeUnit.SECONDS);
                 }

@@ -68,6 +68,18 @@ public class RedisPlayerAPI {
             }
         });
     }*/
+    public CompletableFuture<Boolean> isServerOnline(String serverName) {
+        return CompletableFuture.supplyAsync(() -> {
+            try (Jedis jedis = jedisPool.getResource()) {
+                String key = "server_status:" + serverName;
+                String status = jedis.get(key);
+                return "online".equals(status);
+            } catch (Exception e) {
+                logger.severe("Error checking server status: " + e.getMessage());
+                return false;
+            }
+        });
+    }
     public CompletableFuture<Set<String>> getOnlinePlayersAsync() {
         return CompletableFuture.supplyAsync(() -> {
             try (Jedis jedis = jedisPool.getResource()) {
