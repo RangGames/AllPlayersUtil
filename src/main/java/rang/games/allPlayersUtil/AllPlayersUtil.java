@@ -97,13 +97,43 @@ public final class AllPlayersUtil {
         logger.info("AllPlayersUtil has been enabled!");
     }
 
+
     private void disable() {
-        if (redisClient != null) {
+        if (logger != null) {
+            logger.info("AllPlayersUtil disable sequence initiated by AllPlayersUtil.disable().");
+        }
+        if (redisClient != null && redisClient.isFunctional()) {
             Config config = loadConfig();
             String serverName = config.getString("server.name", "default-server");
-            redisClient.cleanupServerAsync(serverName);
+            if (serverName != null && !serverName.equals("default-server")) {
+                if (logger != null) {
+                    logger.info("AllPlayersUtil.disable() is attempting to call cleanupServerAsync for " + serverName);
+                }
+                try {
+                    redisClient.cleanupServerAsync(serverName).exceptionally(throwable -> {
+                        if (logger != null) {
+                            logger.warning("Error during cleanupServerAsync in AllPlayersUtil.disable(): " + throwable.getMessage());
+                        }
+                        return null;
+                    });
+                } catch (Exception e) {
+                    if (logger != null) {
+                        logger.severe("Exception when calling cleanupServerAsync in AllPlayersUtil.disable(): " + e.getMessage());
+                    }
+                }
+            } else {
+                if (logger != null) {
+                    logger.warning("Invalid serverName ('" + serverName + "') from config, skipping cleanupServerAsync in AllPlayersUtil.disable().");
+                }
+            }
+        } else {
+            if (logger != null) {
+                logger.warning("RedisClient is null or not functional in AllPlayersUtil.disable(), skipping cleanupServerAsync.");
+            }
         }
-        logger.info("AllPlayersUtil has been disabled!");
+        if (logger != null) {
+            logger.info("AllPlayersUtil.disable() finished its specific tasks.");
+        }
     }
 
     private void createDefaultConfig() {

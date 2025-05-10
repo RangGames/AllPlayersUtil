@@ -33,6 +33,8 @@ public class RedisPlayerAPI {
     static void initialize(JedisPool jedisPool) {
         if (instance == null) {
             instance = new RedisPlayerAPI(jedisPool);
+        } else {
+            instance = new RedisPlayerAPI(jedisPool);
         }
     }
 
