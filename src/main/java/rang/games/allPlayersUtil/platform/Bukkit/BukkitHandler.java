@@ -1,4 +1,4 @@
-package rang.games.allPlayersUtil.platform;
+package rang.games.allPlayersUtil.platform.Bukkit;
 
 import org.bukkit.Bukkit;
 import org.bukkit.event.EventHandler;
@@ -12,6 +12,7 @@ import rang.games.allPlayersUtil.RedisClient;
 import rang.games.allPlayersUtil.event.NetworkJoinEvent;
 import rang.games.allPlayersUtil.event.NetworkQuitEvent;
 import rang.games.allPlayersUtil.event.ServerSwitchEvent;
+import rang.games.allPlayersUtil.platform.PlatformHandler;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Transaction;
 
@@ -19,7 +20,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-public class PurpurHandler implements PlatformHandler {
+public class BukkitHandler implements PlatformHandler {
     private final JavaPlugin plugin;
     private RedisClient redisClient;
     private String serverName;
@@ -27,7 +28,7 @@ public class PurpurHandler implements PlatformHandler {
     private volatile boolean isEnabled = false;
     private BukkitTask playerUpdateTask;
 
-    public PurpurHandler(JavaPlugin plugin) {
+    public BukkitHandler(JavaPlugin plugin) {
         this.plugin = plugin;
         this.listener = new BukkitListener();
     }
@@ -38,7 +39,7 @@ public class PurpurHandler implements PlatformHandler {
         this.serverName = serverName;
         this.isEnabled = true;
 
-        plugin.getLogger().info("§aInitializing PurpurHandler for server: " + serverName);
+        plugin.getLogger().info("§aInitializing BukkitHandler for server: " + serverName);
 
         this.redisClient.addListener((type, playerUuid, playerName, fromServer, toServer) -> {
             if (!isEnabled || plugin == null) return;

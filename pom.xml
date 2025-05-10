@@ -133,13 +133,6 @@
             </exclusions>
         </dependency>
         <dependency>
-            <groupId>net.zrips</groupId>
-            <artifactId>CMIAPI</artifactId>
-            <version>9.7.4.1</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/CMIAPI-9.7.4.1.jar</systemPath>
-        </dependency>
-        <dependency>
             <groupId>javax.annotation</groupId>
             <artifactId>javax.annotation-api</artifactId>
             <version>1.3.2</version>

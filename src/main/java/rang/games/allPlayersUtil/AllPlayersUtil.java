@@ -7,6 +7,10 @@ import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
 import rang.games.allPlayersUtil.platform.*;
+import rang.games.allPlayersUtil.platform.Bukkit.BukkitHandler;
+import rang.games.allPlayersUtil.platform.Bukkit.BukkitSchedulerService;
+import rang.games.allPlayersUtil.platform.Velocity.VelocityHandler;
+import rang.games.allPlayersUtil.platform.Velocity.VelocitySchedulerService;
 
 import java.io.File;
 import java.io.FileReader;
@@ -86,7 +90,7 @@ public final class AllPlayersUtil {
         this.redisClient = RedisClient.getInstance();
         this.platformHandler = isVelocity ?
                 new VelocityHandler(proxyServer, plugin, logger) :
-                new PurpurHandler((org.bukkit.plugin.java.JavaPlugin) plugin);
+                new BukkitHandler((org.bukkit.plugin.java.JavaPlugin) plugin);
         platformHandler.initialize(redisClient, serverName);
         platformHandler.registerEvents();
 

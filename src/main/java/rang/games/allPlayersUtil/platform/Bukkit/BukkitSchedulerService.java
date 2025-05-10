@@ -1,4 +1,4 @@
-package rang.games.allPlayersUtil.platform;
+package rang.games.allPlayersUtil.platform.Bukkit;
 
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;

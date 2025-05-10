@@ -1,4 +1,4 @@
-package rang.games.allPlayersUtil.platform;
+package rang.games.allPlayersUtil.platform.Velocity;
 
 import com.google.inject.Inject;
 import com.velocitypowered.api.event.Subscribe;
@@ -9,7 +9,6 @@ import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
 import rang.games.allPlayersUtil.RedisClient;
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.Transaction;
 
 import java.io.IOException;

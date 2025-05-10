@@ -1,4 +1,4 @@
-package rang.games.allPlayersUtil.platform;
+package rang.games.allPlayersUtil.platform.Velocity;
 
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.DisconnectEvent;
@@ -7,6 +7,7 @@ import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 import rang.games.allPlayersUtil.RedisClient;
+import rang.games.allPlayersUtil.platform.PlatformHandler;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Transaction;
 

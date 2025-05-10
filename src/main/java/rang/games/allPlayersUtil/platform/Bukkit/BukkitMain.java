@@ -1,4 +1,4 @@
-package rang.games.allPlayersUtil.platform;
+package rang.games.allPlayersUtil.platform.Bukkit;
 
 import org.bukkit.plugin.java.JavaPlugin;
 import rang.games.allPlayersUtil.AllPlayersUtilCore;
@@ -13,7 +13,7 @@ public class BukkitMain extends JavaPlugin {
     private AllPlayersUtilCore core;
 
     private RedisClient redisClient;
-    private PurpurHandler platformHandler;
+    private BukkitHandler platformHandler;
     private String serverName;
 
     @Override
@@ -31,7 +31,7 @@ public class BukkitMain extends JavaPlugin {
                     this,
                     new BukkitSchedulerService(this));
             this.redisClient = RedisClient.getInstance();
-            platformHandler = new PurpurHandler(this);
+            platformHandler = new BukkitHandler(this);
             platformHandler.initialize(redisClient, serverName);
 
             //getServer().getPluginManager().registerEvents(new NetworkEventListener(this), this);
