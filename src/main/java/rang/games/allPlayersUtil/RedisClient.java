@@ -141,12 +141,14 @@ public class RedisClient {
                 if (jedis.exists("online_players")) {
                     jedis.expire("online_players", 300);
                 }
+                /*
                 Set<String> serverStatusKeys = jedis.keys("server_status:*");
                 for (String statusKey : serverStatusKeys) {
                     if (jedis.exists(statusKey)) {
                         jedis.expire(statusKey, 45);
                     }
-                }
+                }*/
+
             } catch (Exception e) {
                 logger.severe("Error refreshing Redis keys: " + e.getMessage());
             }
