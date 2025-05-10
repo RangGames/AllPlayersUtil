@@ -27,7 +27,7 @@ import java.util.logging.Logger;
 @Plugin(
         id = "all-players-util",
         name = "AllPlayersUtil",
-        version = "2.0.4.9-SNAPSHOT",
+        version = "2.0.4.11-SNAPSHOT",
         description = "Network-wide player tracking utility",
         authors = {"rang"}
 )
@@ -37,6 +37,7 @@ public class VelocityMain {
     private final Path dataDirectory;
     private RedisClient redisClient;
     private VelocityHandler platformHandler;
+    private String serverName;
 
     @Inject
     public VelocityMain(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory) {
@@ -52,7 +53,7 @@ public class VelocityMain {
 
             String redisHost = config.getProperty("redis_host", "localhost");
             int redisPort = Integer.parseInt(config.getProperty("redis_port", "6379"));
-            String serverName = config.getProperty("server_name", "proxy");
+            this.serverName = config.getProperty("server_name", "proxy");
 
             RedisClient.initialize(
                     redisHost,
@@ -64,11 +65,17 @@ public class VelocityMain {
             this.redisClient = RedisClient.getInstance();
 
             this.platformHandler = new VelocityHandler(server, this, logger);
-            this.platformHandler.initialize(redisClient, serverName);
+            this.platformHandler.initialize(redisClient, this.serverName);
 
-            logger.info("§aAllPlayersUtil has been enabled!");
+            this.redisClient.publishNetworkServerStart(this.serverName)
+                    .exceptionally(throwable -> {
+                        logger.severe("Failed to publish proxy server start event: " + throwable.getMessage());
+                        return null;
+                    });
+
+            logger.info("§aAllPlayersUtil has been enabled on Velocity!");
         } catch (Exception e) {
-            logger.severe("§cFailed to initialize AllPlayersUtil: " + e.getMessage());
+            logger.severe("§cFailed to initialize AllPlayersUtil on Velocity: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -76,33 +83,34 @@ public class VelocityMain {
     public void onProxyShutdown(ProxyShutdownEvent event) {
         if (redisClient != null) {
             try {
-                Properties config = loadConfig();
-                String serverName = config.getProperty("server_name", "proxy");
+                if (this.serverName != null) {
+                    this.redisClient.publishNetworkServerShutdown(this.serverName).get(5, TimeUnit.SECONDS);
+                }
 
                 try (Jedis jedis = redisClient.getJedisPool().getResource()) {
-                    jedis.del("server_status:" + serverName);
+                    jedis.del("server_status:" + this.serverName);
 
-                    Set<String> players = jedis.smembers("server:" + serverName);
+                    Set<String> players = jedis.smembers("server:" + this.serverName);
 
                     if (!players.isEmpty()) {
                         Transaction transaction = jedis.multi();
 
                         for (String uuid : players) {
-                            transaction.srem("server:" + serverName, uuid);
+                            transaction.srem("server:" + this.serverName, uuid);
                             transaction.srem("online_players", uuid);
                         }
 
-                        transaction.del("server:" + serverName);
+                        transaction.del("server:" + this.serverName);
                         transaction.exec();
                     }
                 }
-                redisClient.cleanupServerAsync(serverName).get(5, TimeUnit.SECONDS);
+                redisClient.cleanupServerAsync(this.serverName).get(5, TimeUnit.SECONDS);
                 redisClient.shutdown().get(5, TimeUnit.SECONDS);
-                logger.info("AllPlayersUtil shutdown completed successfully");
+                logger.info("AllPlayersUtil shutdown completed successfully on Velocity");
             } catch (TimeoutException e) {
-                logger.warning("Shutdown process did not complete within timeout");
+                logger.warning("Shutdown process did not complete within timeout on Velocity");
             } catch (Exception e) {
-                logger.severe("Error during shutdown: " + e.getMessage());
+                logger.severe("Error during shutdown on Velocity: " + e.getMessage());
             }
         }
     }
@@ -120,6 +128,9 @@ public class VelocityMain {
                 try (InputStream in = getClass().getResourceAsStream("/config.properties")) {
                     if (in != null) {
                         Files.copy(in, configPath);
+                    } else {
+                        logger.warning("Default config.properties not found in resources. Creating a basic one.");
+                        Files.writeString(configPath, "redis_host=localhost\nredis_port=6379\nserver_name=proxy\n");
                     }
                 }
             }
@@ -132,7 +143,6 @@ public class VelocityMain {
         } catch (IOException e) {
             logger.warning("Failed to load config: " + e.getMessage());
         }
-
         return props;
     }
 }

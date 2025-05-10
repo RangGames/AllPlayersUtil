@@ -67,7 +67,7 @@ public class VelocityHandler implements PlatformHandler {
     @Subscribe
     public void onLogin(LoginEvent event) {
         if (!isEnabled) return;
-        logger.info("§aLogin event detected for: " + event.getPlayer().getUsername());
+        //logger.info("§aLogin event detected for: " + event.getPlayer().getUsername());
         String uuid = event.getPlayer().getUniqueId().toString();
         String name = event.getPlayer().getUsername();
         if (redisClient != null && serverName != null) {

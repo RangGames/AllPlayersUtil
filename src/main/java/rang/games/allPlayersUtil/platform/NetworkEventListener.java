@@ -6,6 +6,8 @@ import org.bukkit.event.Listener;
 import org.bukkit.plugin.java.JavaPlugin;
 import rang.games.allPlayersUtil.event.NetworkJoinEvent;
 import rang.games.allPlayersUtil.event.NetworkQuitEvent;
+import rang.games.allPlayersUtil.event.NetworkServerShutdownEvent; // 추가
+import rang.games.allPlayersUtil.event.NetworkServerStartEvent;   // 추가
 import rang.games.allPlayersUtil.event.ServerSwitchEvent;
 
 public class NetworkEventListener implements Listener {
@@ -32,5 +34,15 @@ public class NetworkEventListener implements Listener {
         plugin.getLogger().info("§e[NetworkEvent] Player switched server: " +
                 event.getPlayerName() + " (UUID: " + event.getPlayerUuid() + ") " +
                 "from " + event.getFromServer() + " to " + event.getToServer());
+    }
+
+    @EventHandler(priority = EventPriority.NORMAL)
+    public void onNetworkServerStart(NetworkServerStartEvent event) {
+        plugin.getLogger().info("§b[NetworkEvent] Server started: " + event.getServerName());
+    }
+
+    @EventHandler(priority = EventPriority.NORMAL)
+    public void onNetworkServerShutdown(NetworkServerShutdownEvent event) {
+        plugin.getLogger().info("§6[NetworkEvent] Server shutdown: " + event.getServerName());
     }
 }
