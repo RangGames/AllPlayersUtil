@@ -1,7 +1,6 @@
 name: AllPlayersUtil
 version: '${project.version}'
-main: rang.games.allPlayersUtil.AllPlayersUtil$BukkitMain
+main: rang.games.allPlayersUtil.platform.Bukkit.BukkitMain
 api-version: '1.21'
 authors: [rang]
 description: Network-wide player tracking utility
-soft-depends: [CMI]

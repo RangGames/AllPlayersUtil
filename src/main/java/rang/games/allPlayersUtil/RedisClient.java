@@ -10,6 +10,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class RedisClient {
@@ -30,6 +31,7 @@ public class RedisClient {
 
     private Object subscriberTask = null;
     private Object keyRefreshTask = null;
+    private static final int SHUTDOWN_TASK_WAIT_SECONDS = 7;
 
     public interface SchedulerService {
         Object scheduleAsyncRepeatingTask(Runnable task, long initialDelay, long period);
@@ -49,15 +51,15 @@ public class RedisClient {
         void onNetworkEvent(NetworkEventType type, String id, String name, String fromServer, String toServer);
     }
 
-    public static synchronized void initialize(String host, int port, Object plugin, SchedulerService scheduler) {
+    public static synchronized void initialize(String host, int port, Object pluginInstance, SchedulerService schedulerInstance) {
         if (instance != null && instance.isInitialized.get() && !instance.isShuttingDown.get()) {
-            logger.warning("RedisClient is already initialized and running. Skipping re-initialization.");
             return;
         }
         RedisClient.host = host;
         RedisClient.port = port;
-        RedisClient.plugin = plugin;
-        RedisClient.scheduler = scheduler;
+        RedisClient.plugin = pluginInstance;
+        RedisClient.scheduler = schedulerInstance;
+
         if (instance != null) {
             instance.isShuttingDown.set(true);
         }
@@ -65,49 +67,45 @@ public class RedisClient {
     }
 
     private RedisClient(String host, int port, Object pluginInstance, SchedulerService schedulerInstance) {
-        RedisClient.host = host;
-        RedisClient.port = port;
-        RedisClient.plugin = pluginInstance;
-        RedisClient.scheduler = schedulerInstance;
-
         JedisPoolConfig poolConfig = new JedisPoolConfig();
-        poolConfig.setMaxTotal(8);
-        poolConfig.setMaxIdle(8);
+        poolConfig.setMaxTotal(10);
+        poolConfig.setMaxIdle(10);
         poolConfig.setMinIdle(2);
         poolConfig.setTestOnBorrow(true);
         poolConfig.setTestOnReturn(true);
         poolConfig.setTestWhileIdle(true);
-        poolConfig.setMinEvictableIdleTimeMillis(60000);
-        poolConfig.setTimeBetweenEvictionRunsMillis(30000);
+        poolConfig.setMinEvictableIdleTimeMillis(TimeUnit.SECONDS.toMillis(60));
+        poolConfig.setTimeBetweenEvictionRunsMillis(TimeUnit.SECONDS.toMillis(30));
         poolConfig.setNumTestsPerEvictionRun(3);
         poolConfig.setBlockWhenExhausted(true);
-        poolConfig.setMaxWaitMillis(10000);
+        poolConfig.setMaxWaitMillis(TimeUnit.SECONDS.toMillis(10));
 
         try {
-            this.jedisPool = new JedisPool(poolConfig, host, port, 2000);
+            this.jedisPool = new JedisPool(poolConfig, RedisClient.host, RedisClient.port, 2000);
             try (Jedis jedis = this.jedisPool.getResource()) {
                 jedis.ping();
             }
             RedisPlayerAPI.initialize(jedisPool);
             this.playerAPI = RedisPlayerAPI.getInstance();
             isInitialized.set(true);
+            isShuttingDown.set(false);
+
             startSubscriber();
             startKeyRefreshTask();
-            logger.info("RedisClient initialized successfully and connected to " + host + ":" + port);
+            logger.info("RedisClient initialized successfully and connected to " + RedisClient.host + ":" + RedisClient.port);
         } catch (JedisConnectionException e) {
-            logger.severe("Failed to connect to Redis server at " + host + ":" + port + ". RedisClient will not be functional. Error: " + e.getMessage());
+            logger.log(Level.SEVERE, "Failed to connect to Redis server at " + RedisClient.host + ":" + RedisClient.port + ". RedisClient will not be functional.", e);
             isInitialized.set(false);
             if (this.jedisPool != null) {
-                try { this.jedisPool.close(); } catch (Exception ex) { logger.warning("Error closing jedisPool on connection exception: " + ex.getMessage());}
+                try { this.jedisPool.close(); } catch (Exception ex) { logger.log(Level.WARNING, "Error closing jedisPool on connection exception.", ex);}
                 this.jedisPool = null;
             }
             this.playerAPI = null;
         } catch (Exception e) {
-            logger.severe("An unexpected error occurred during RedisClient initialization: " + e.getMessage());
-            e.printStackTrace();
+            logger.log(Level.SEVERE, "An unexpected error occurred during RedisClient initialization.", e);
             isInitialized.set(false);
             if (this.jedisPool != null && !this.jedisPool.isClosed()) {
-                try { this.jedisPool.close(); } catch (Exception ex) { logger.warning("Error closing jedisPool on general exception: " + ex.getMessage());}
+                try { this.jedisPool.close(); } catch (Exception ex) { logger.log(Level.WARNING, "Error closing jedisPool on general exception.", ex);}
             }
             this.playerAPI = null;
         }
@@ -119,12 +117,13 @@ public class RedisClient {
                 if (instance == null || !instance.isInitialized.get()) {
                     validateParameters();
                     if (instance != null && !instance.isInitialized.get() && instance.isShuttingDown.get()) {
+                        logger.info("Previous RedisClient instance was shutting down. Creating new instance.");
                         instance = new RedisClient(host, port, plugin, scheduler);
                     } else if (instance == null) {
                         instance = new RedisClient(host, port, plugin, scheduler);
                     }
                     if (instance != null && !instance.isInitialized.get()) {
-                        logger.severe("RedisClient getInstance() called, but initialization failed. Returning a non-functional instance.");
+                        logger.severe("RedisClient getInstance() called, but initialization failed. Returning a non-functional instance or null.");
                     }
                 }
             }
@@ -134,21 +133,24 @@ public class RedisClient {
 
     private static void validateParameters() {
         if (host == null || scheduler == null || plugin == null) {
-            throw new IllegalStateException("RedisClient must be initialized with host, scheduler, and plugin before getInstance() is called.");
+            throw new IllegalStateException("RedisClient static parameters (host, scheduler, plugin) not set. Call RedisClient.initialize() first.");
         }
     }
 
     private void startSubscriber() {
         if (isShuttingDown.get() || !isInitialized.get() || scheduler == null) {
+            logger.warning("Subscriber task not started: Shutting down, not initialized, or scheduler is null.");
             return;
         }
         if (subscriberTask != null) {
-            try { scheduler.cancelTask(subscriberTask); } catch (Exception ignored) {}
+            try { scheduler.cancelTask(subscriberTask); scheduledTasks.remove(subscriberTask); } catch (Exception ignored) {}
+            subscriberTask = null;
         }
+
         subscriberTask = scheduler.scheduleAsyncRepeatingTask(() -> {
             if (isShuttingDown.get()) {
                 if (subscriberTask != null) {
-                    try { scheduler.cancelTask(subscriberTask); } catch (Exception ignored) {}
+                    try { scheduler.cancelTask(subscriberTask); scheduledTasks.remove(subscriberTask); } catch (Exception ignored) {}
                     subscriberTask = null;
                 }
                 return;
@@ -162,52 +164,59 @@ public class RedisClient {
             try (Jedis jedis = jedisPool.getResource()) {
                 if (pubSub == null || !pubSub.isSubscribed()) {
                     if (pubSub != null && pubSub.isSubscribed()) {
-                        try {
-                            pubSub.unsubscribe();
-                        } catch (Exception e) {
-                            logger.warning("Error unsubscribing existing pubSub: " + e.getMessage());
-                        }
+                        try { pubSub.unsubscribe(); } catch (Exception e) { logger.warning("Error unsubscribing existing pubSub: " + e.getMessage()); }
                     }
                     pubSub = createPubSub();
-                    logger.info("Subscribing to Redis channel: network-events");
+                    logger.info("Attempting to subscribe to Redis channel: network-events");
                     jedis.subscribe(pubSub, "network-events");
+                    logger.info("Redis channel subscription ended (either by unsubscribe or error).");
                 }
             } catch (JedisConnectionException e) {
                 if (!isShuttingDown.get()) {
-                    logger.warning("Redis connection error in subscriber task: " + e.getMessage() + ". Will attempt to resubscribe.");
-                    if (pubSub != null && pubSub.isSubscribed()) {
-                        try { pubSub.unsubscribe(); } catch (Exception ignored) {}
+                    logger.warning("Redis connection error in subscriber task: " + e.getMessage() + ". Will attempt to resubscribe on next iteration.");
+                    if (pubSub != null) {
+                        if (pubSub.isSubscribed()) try { pubSub.unsubscribe(); } catch (Exception ignored) {}
+                        pubSub = null;
                     }
-                    pubSub = null;
                     reconnectJedisPool();
                 }
             } catch (Exception e) {
                 if (!isShuttingDown.get()) {
-                    logger.warning("Error in Redis subscriber task: " + e.getMessage());
-                    e.printStackTrace();
+                    logger.log(Level.WARNING, "Error in Redis subscriber task: " + e.getMessage(), e);
+                    if (pubSub != null) {
+                        if (pubSub.isSubscribed()) try { pubSub.unsubscribe(); } catch (Exception ignored) {}
+                        pubSub = null;
+                    }
                 }
             }
-        }, 0L, 5000L);
-        scheduledTasks.add(subscriberTask);
+        }, 0L, TimeUnit.SECONDS.toMillis(5));
+
+        if (subscriberTask != null) {
+            scheduledTasks.add(subscriberTask);
+        } else {
+            logger.severe("Failed to schedule subscriber task!");
+        }
     }
 
     private void startKeyRefreshTask() {
         if (isShuttingDown.get() || !isInitialized.get() || scheduler == null) {
+            logger.warning("Key refresh task not started: Shutting down, not initialized, or scheduler is null.");
             return;
         }
         if (keyRefreshTask != null) {
-            try { scheduler.cancelTask(keyRefreshTask); } catch (Exception ignored) {}
+            try { scheduler.cancelTask(keyRefreshTask); scheduledTasks.remove(keyRefreshTask); } catch (Exception ignored) {}
+            keyRefreshTask = null;
         }
+
         keyRefreshTask = scheduler.scheduleAsyncRepeatingTask(() -> {
             if (isShuttingDown.get()) {
                 if (keyRefreshTask != null) {
-                    try { scheduler.cancelTask(keyRefreshTask); } catch (Exception ignored) {}
+                    try { scheduler.cancelTask(keyRefreshTask); scheduledTasks.remove(keyRefreshTask); } catch (Exception ignored) {}
                     keyRefreshTask = null;
                 }
                 return;
             }
-            if (jedisPool == null || jedisPool.isClosed()) {
-                logger.warning("JedisPool is not available for key refresh task.");
+            if (jedisPool == null || jedisPool.isClosed() || !isInitialized.get()) {
                 return;
             }
             try (Jedis jedis = jedisPool.getResource()) {
@@ -220,33 +229,54 @@ public class RedisClient {
                 if (jedis.exists("online_players")) {
                     jedis.expire("online_players", 300);
                 }
+                Set<String> statusKeys = jedis.keys("server_status:*");
+                for (String statusKey : statusKeys) {
+                    if (jedis.exists(statusKey)) {
+                        jedis.expire(statusKey, 45);
+                    }
+                }
             } catch (JedisConnectionException e) {
                 if (!isShuttingDown.get()) {
                     logger.warning("Redis connection error during key refresh: " + e.getMessage());
                     reconnectJedisPool();
                 }
             } catch (Exception e) {
-                logger.severe("Error refreshing Redis keys: " + e.getMessage());
+                if (!isShuttingDown.get()) {
+                    logger.log(Level.SEVERE, "Error refreshing Redis keys: " + e.getMessage(), e);
+                }
             }
-        }, 30000L, 30000L);
-        scheduledTasks.add(keyRefreshTask);
+        }, TimeUnit.SECONDS.toMillis(30), TimeUnit.SECONDS.toMillis(30));
+
+        if (keyRefreshTask != null) {
+            scheduledTasks.add(keyRefreshTask);
+        } else {
+            logger.severe("Failed to schedule key refresh task!");
+        }
     }
 
     private synchronized void reconnectJedisPool() {
         if (isShuttingDown.get()) return;
+
         logger.info("Attempting to reconnect JedisPool...");
-        if (jedisPool != null && !jedisPool.isClosed()) {
+        if (jedisPool != null) {
             try {
-                jedisPool.close();
+                if (!jedisPool.isClosed()) jedisPool.close();
             } catch (Exception e) {
                 logger.warning("Error closing old JedisPool during reconnect: " + e.getMessage());
             }
+            jedisPool = null;
         }
+        playerAPI = null;
+        isInitialized.set(false);
+
         JedisPoolConfig poolConfig = new JedisPoolConfig();
-        poolConfig.setMaxTotal(8);
-        poolConfig.setMaxIdle(8);
-        poolConfig.setMinIdle(2);
-        poolConfig.setTestOnBorrow(true);
+        poolConfig.setMaxTotal(10); poolConfig.setMaxIdle(10); poolConfig.setMinIdle(2);
+        poolConfig.setTestOnBorrow(true); poolConfig.setTestWhileIdle(true);
+        poolConfig.setMinEvictableIdleTimeMillis(TimeUnit.SECONDS.toMillis(60));
+        poolConfig.setTimeBetweenEvictionRunsMillis(TimeUnit.SECONDS.toMillis(30));
+        poolConfig.setNumTestsPerEvictionRun(3); poolConfig.setBlockWhenExhausted(true);
+        poolConfig.setMaxWaitMillis(TimeUnit.SECONDS.toMillis(10));
+
         try {
             jedisPool = new JedisPool(poolConfig, host, port, 2000);
             try (Jedis jedis = jedisPool.getResource()) {
@@ -254,29 +284,304 @@ public class RedisClient {
             }
             RedisPlayerAPI.initialize(jedisPool);
             this.playerAPI = RedisPlayerAPI.getInstance();
+            isInitialized.set(true);
             logger.info("JedisPool reconnected successfully.");
+
             if (pubSub == null || !pubSub.isSubscribed()) {
-                if (subscriberTask != null) {
-                    try { scheduler.cancelTask(subscriberTask); } catch (Exception ignored) {}
-                    subscriberTask = null;
-                    startSubscriber();
-                }
+                logger.info("PubSub was not active, attempting to restart subscriber task after reconnect.");
+                startSubscriber();
             }
         } catch (Exception e) {
             logger.severe("Failed to reconnect JedisPool: " + e.getMessage());
             if (jedisPool != null) {
-                try { jedisPool.close(); } catch (Exception ex) { logger.warning("Error closing jedisPool on reconnect failure: " + ex.getMessage()); }
+                try { if (!jedisPool.isClosed()) jedisPool.close(); } catch (Exception ex) { logger.warning("Error closing jedisPool on reconnect failure: " + ex.getMessage()); }
                 jedisPool = null;
             }
             this.playerAPI = null;
+            isInitialized.set(false);
         }
     }
 
-    public CompletableFuture<Void> updateServerStatus(String serverName) {
-        if (isShuttingDown.get() || !isInitialized.get() || jedisPool == null || jedisPool.isClosed()) {
+    public CompletableFuture<Void> shutdown() {
+        if (!isShuttingDown.compareAndSet(false, true)) {
+            logger.info("Redis client shutdown already in progress or completed.");
+            return CompletableFuture.completedFuture(null);
+        }
+        isInitialized.set(false);
+
+        logger.info("Starting Redis client shutdown process...");
+
+        if (pubSub != null) {
+            if (pubSub.isSubscribed()) {
+                logger.info("Unsubscribing from Redis channels...");
+                try {
+                    pubSub.unsubscribe();
+                } catch (Exception e) {
+                    logger.warning("Error during pubSub.unsubscribe(): " + e.getMessage());
+                }
+            }
+            pubSub = null;
+        }
+
+        if (scheduler != null) {
+            logger.info("Cancelling core scheduled tasks (subscriber, key refresh)...");
+            if (subscriberTask != null) {
+                try { scheduler.cancelTask(subscriberTask); } catch (Exception e) {logger.warning("Error cancelling subscriber task: " + e.getMessage());}
+                scheduledTasks.remove(subscriberTask);
+                subscriberTask = null;
+            }
+            if (keyRefreshTask != null) {
+                try { scheduler.cancelTask(keyRefreshTask); } catch (Exception e) {logger.warning("Error cancelling key refresh task: " + e.getMessage());}
+                scheduledTasks.remove(keyRefreshTask);
+                keyRefreshTask = null;
+            }
+
+            if (!scheduledTasks.isEmpty()) {
+                logger.info("Cancelling " + scheduledTasks.size() + " other tasks in scheduledTasks set...");
+                for (Object task : new HashSet<>(scheduledTasks)) {
+                    try {
+                        scheduler.cancelTask(task);
+                    } catch (Exception e) {
+                        logger.warning("Error cancelling a task from scheduledTasks set: " + e.getMessage());
+                    }
+                }
+            }
+            scheduledTasks.clear();
+        } else {
+            logger.warning("Scheduler is null, cannot cancel scheduled tasks.");
+        }
+
+        if (!activeTasks.isEmpty()) {
+            logger.info("Waiting for " + activeTasks.size() + " active one-off tasks to complete (timeout: " + SHUTDOWN_TASK_WAIT_SECONDS + "s)...");
+            CompletableFuture<?>[] tasksToWaitForArray = activeTasks.toArray(new CompletableFuture<?>[0]);
+            CompletableFuture<Void> allActiveTasksFuture = CompletableFuture.allOf(tasksToWaitForArray);
+            try {
+                allActiveTasksFuture.get(SHUTDOWN_TASK_WAIT_SECONDS, TimeUnit.SECONDS);
+                logger.info("All active one-off tasks completed or timed out.");
+            } catch (TimeoutException e) {
+                logger.warning(tasksToWaitForArray.length + " active tasks did not complete within timeout. Attempting to cancel them.");
+                for (CompletableFuture<?> future : tasksToWaitForArray) {
+                    if (!future.isDone()) {
+                        future.cancel(true);
+                    }
+                }
+            } catch (InterruptedException e) {
+                logger.warning("Interrupted while waiting for active tasks. Cancelling remaining tasks.");
+                for (CompletableFuture<?> future : tasksToWaitForArray) {
+                    if (!future.isDone()) {
+                        future.cancel(true);
+                    }
+                }
+                Thread.currentThread().interrupt();
+            } catch (CancellationException e) {
+                logger.info("Some active tasks were cancelled during shutdown wait.");
+            } catch (Exception e) {
+                logger.log(Level.WARNING, "Error waiting for active tasks to complete: " + e.getMessage(), e);
+            }
+        } else {
+            logger.info("No active one-off tasks to wait for.");
+        }
+        activeTasks.clear();
+
+        if (jedisPool != null) {
+            logger.info("Closing JedisPool...");
+            try {
+                if (!jedisPool.isClosed()) {
+                    jedisPool.close();
+                }
+            } catch (Exception e) {
+                logger.log(Level.SEVERE, "Error closing JedisPool: " + e.getMessage(), e);
+            }
+            jedisPool = null;
+        }
+
+        playerAPI = null;
+
+        logger.info("Redis client shutdown process completed.");
+        return CompletableFuture.completedFuture(null);
+    }
+
+    private <T> CompletableFuture<T> trackTask(CompletableFuture<T> future) {
+        if (isShuttingDown.get()) {
+            future.completeExceptionally(new IllegalStateException("RedisClient is shutting down. Task not executed."));
+            return future;
+        }
+        if (!isInitialized.get()) {
+            future.completeExceptionally(new IllegalStateException("RedisClient not initialized. Task not executed."));
+            return future;
+        }
+
+        activeTasks.add(future);
+        return future.whenComplete((result, ex) -> {
+            activeTasks.remove(future);
+            if (ex != null && !(ex instanceof CancellationException)) {
+                if (isShuttingDown.get() && (ex instanceof JedisConnectionException || ex.getCause() instanceof JedisConnectionException)) {
+                    logger.warning("Tracked task failed during shutdown: " + ex.getMessage());
+                } else if (!isShuttingDown.get()){
+                    logger.log(Level.SEVERE, "Tracked task failed with error: " + ex.getMessage(), ex);
+                }
+            }
+        });
+    }
+
+    public boolean isFunctional() {
+        return isInitialized.get() && !isShuttingDown.get() && jedisPool != null && !jedisPool.isClosed();
+    }
+
+    public boolean isShuttingDown() {
+        return isShuttingDown.get();
+    }
+
+    public CompletableFuture<Void> publishNetworkJoin(String uuid, String playerName, String serverName) {
+        if (!isFunctional()) {
+            logger.warning("publishNetworkJoin called but RedisClient not functional.");
+            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not functional."));
+        }
+        return trackTask(CompletableFuture.runAsync(() -> {
+            try (Jedis jedis = jedisPool.getResource()) {
+                jedis.sadd("online_players", uuid);
+                jedis.expire("online_players", 300);
+                jedis.sadd("server:" + serverName, uuid);
+                jedis.expire("server:" + serverName, 300);
+
+                String message = String.format("%s:%s:%s:%s:%s", NetworkEventType.NETWORK_JOIN, uuid, playerName, "null", serverName);
+                jedis.publish("network-events", message);
+            } catch (Exception e) {
+                logger.log(Level.SEVERE, "Error publishing network join for " + playerName + ": " + e.getMessage(), e);
+                throw new CompletionException(e);
+            }
+        }, ForkJoinPool.commonPool()));
+    }
+
+    public CompletableFuture<Void> publishNetworkQuit(String uuid, String playerName, String serverName) {
+        if (!isFunctional()) {
             return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
         }
-        return CompletableFuture.runAsync(() -> {
+        return trackTask(removePlayerAsync(uuid, serverName)
+                .thenComposeAsync(v -> {
+                    if (jedisPool == null || jedisPool.isClosed()) {
+                        return CompletableFuture.failedFuture(new IllegalStateException("JedisPool closed during operation"));
+                    }
+                    return CompletableFuture.runAsync(() -> {
+                        try (Jedis jedis = jedisPool.getResource()) {
+                            if (!jedis.sismember("online_players", uuid)) {
+                                String message = String.format("%s:%s:%s:%s:%s", NetworkEventType.NETWORK_QUIT, uuid, playerName, serverName, "null");
+                                jedis.publish("network-events", message);
+                            }
+                        } catch (Exception e) {
+                            logger.severe("Error publishing network quit for " + playerName + ": " + e.getMessage());
+                            throw new CompletionException(e);
+                        }
+                    }, ForkJoinPool.commonPool());
+                })
+                .exceptionally(e -> {
+                    logger.severe("Error in publishNetworkQuit chain for " + playerName + ": " + e.getMessage());
+                    if (e instanceof CompletionException && e.getCause() != null) {
+                        throw (CompletionException)e;
+                    }
+                    throw new CompletionException(e);
+                }));
+    }
+
+    public CompletableFuture<Void> publishServerSwitch(String uuid, String playerName, String fromServer, String toServer) {
+        if (!isFunctional()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
+        }
+        return trackTask(CompletableFuture.runAsync(() -> {
+            try (Jedis jedis = jedisPool.getResource()) {
+                String message = String.format("%s:%s:%s:%s:%s", NetworkEventType.SERVER_SWITCH, uuid, playerName, fromServer, toServer);
+                jedis.publish("network-events", message);
+            } catch (Exception e) {
+                logger.severe("Error publishing server switch for " + playerName + ": " + e.getMessage());
+                throw new CompletionException(e);
+            }
+        }));
+    }
+
+    public CompletableFuture<Void> publishNetworkServerStart(String serverName) {
+        if (!isFunctional()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
+        }
+        return trackTask(
+                updateServerStatus(serverName)
+                        .thenComposeAsync(voidResult -> {
+                            if (!isFunctional()) {
+                                return CompletableFuture.failedFuture(new IllegalStateException("RedisClient became unready during operation."));
+                            }
+                            return CompletableFuture.runAsync(() -> {
+                                try (Jedis jedis = jedisPool.getResource()) {
+                                    String message = String.format("%s:%s:%s:%s:%s", NetworkEventType.NETWORK_SERVER_START, serverName, "null", "null", "null");
+                                    jedis.publish("network-events", message);
+                                    logger.info("Published network server start event for: " + serverName);
+                                } catch (Exception e) {
+                                    logger.severe("Error publishing network server start for " + serverName + " after status update: " + e.getMessage());
+                                    throw new CompletionException(e);
+                                }
+                            }, ForkJoinPool.commonPool());
+                        })
+                        .exceptionally(e -> {
+                            logger.severe("Error in publishNetworkServerStart chain for " + serverName + ": " + e.getMessage());
+                            if (e instanceof CompletionException && e.getCause() != null) {
+                                throw (CompletionException)e;
+                            }
+                            throw new CompletionException(e);
+                        })
+        );
+    }
+
+    public CompletableFuture<Void> publishNetworkServerShutdown(String serverName) {
+        if (!isFunctional()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
+        }
+        return trackTask(CompletableFuture.runAsync(() -> {
+            try (Jedis jedis = jedisPool.getResource()) {
+                String message = String.format("%s:%s:%s:%s:%s", NetworkEventType.NETWORK_SERVER_SHUTDOWN, serverName, "null", "null", "null");
+                jedis.publish("network-events", message);
+                logger.info("Published network server shutdown event for: " + serverName);
+            } catch (Exception e) {
+                logger.severe("Error publishing network server shutdown for " + serverName + ": " + e.getMessage());
+                throw new CompletionException(e);
+            }
+        }));
+    }
+
+    public CompletableFuture<Void> addPlayerAsync(String uuid, String serverName) {
+        if (!isFunctional()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
+        }
+        return trackTask(CompletableFuture.runAsync(() -> {
+            try (Jedis jedis = jedisPool.getResource()) {
+                jedis.sadd("online_players", uuid);
+                jedis.sadd("server:" + serverName, uuid);
+                jedis.expire("server:" + serverName, 300);
+                jedis.expire("online_players", 300);
+            } catch (Exception e) {
+                logger.severe("Error adding player " + uuid + " to Redis for server " + serverName + ": " + e.getMessage());
+                throw new CompletionException(e);
+            }
+        }));
+    }
+
+    public CompletableFuture<Void> removePlayerAsync(String uuid, String serverName) {
+        if (!isFunctional()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
+        }
+        return trackTask(CompletableFuture.runAsync(() -> {
+            try (Jedis jedis = jedisPool.getResource()) {
+                jedis.srem("online_players", uuid);
+                jedis.srem("server:" + serverName, uuid);
+            } catch (Exception e) {
+                logger.severe("Error removing player " + uuid + " from Redis for server " + serverName + ": " + e.getMessage());
+                throw new CompletionException(e);
+            }
+        }));
+    }
+
+    public CompletableFuture<Void> updateServerStatus(String serverName) {
+        if (!isFunctional()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
+        }
+        return trackTask(CompletableFuture.runAsync(() -> {
             try (Jedis jedis = jedisPool.getResource()) {
                 String key = "server_status:" + serverName;
                 jedis.set(key, "online");
@@ -285,114 +590,51 @@ public class RedisClient {
                 logger.severe("Error updating server status for " + serverName + ": " + e.getMessage());
                 throw new CompletionException(e);
             }
-        });
+        }));
     }
 
-    public CompletableFuture<Void> shutdown() {
-        return CompletableFuture.runAsync(() -> {
-            if (!isShuttingDown.compareAndSet(false, true)) {
-                logger.info("Redis client shutdown already in progress or completed.");
-                return;
-            }
-            logger.info("Starting Redis client shutdown process...");
-
-            if (scheduler != null) {
-                logger.info("Cancelling scheduled tasks...");
-                if (subscriberTask != null) {
-                    try { scheduler.cancelTask(subscriberTask); } catch (Exception ignored) {}
-                    subscriberTask = null;
-                }
-                if (keyRefreshTask != null) {
-                    try { scheduler.cancelTask(keyRefreshTask); } catch (Exception ignored) {}
-                    keyRefreshTask = null;
-                }
-                for (Object task : scheduledTasks) {
-                    try {
-                        scheduler.cancelTask(task);
-                    } catch (Exception e) {
-                        logger.warning("Error cancelling a scheduled task: " + e.getMessage());
-                    }
-                }
-                scheduledTasks.clear();
-            }
-
-
-            if (pubSub != null && pubSub.isSubscribed()) {
-                logger.info("Unsubscribing from Redis channels...");
-                try {
-                    pubSub.unsubscribe();
-                } catch (Exception e) {
-                    logger.warning("Error during unsubscribe: " + e.getMessage());
-                }
-                pubSub = null;
-            }
-
-            if (!activeTasks.isEmpty()) {
-                logger.info("Waiting for active tasks to complete...");
-                CompletableFuture<Void> allTasks = CompletableFuture.allOf(
-                        activeTasks.toArray(new CompletableFuture[0])
-                );
-                try {
-                    allTasks.get(5, TimeUnit.SECONDS);
-                } catch (TimeoutException e) {
-                    logger.warning("Some tasks did not complete within timeout during shutdown.");
-                    activeTasks.forEach(future -> future.cancel(true));
-                } catch (InterruptedException e) {
-                    logger.warning("Interrupted while waiting for active tasks to complete.");
-                    activeTasks.forEach(future -> future.cancel(true));
-                    Thread.currentThread().interrupt();
-                } catch (Exception e) {
-                    logger.warning("Error waiting for active tasks to complete: " + e.getMessage());
-                }
-            }
-            activeTasks.clear();
-
-            if (jedisPool != null && !jedisPool.isClosed()) {
-                logger.info("Closing JedisPool...");
-                try {
-                    jedisPool.close();
-                } catch (Exception e) {
-                    logger.severe("Error closing JedisPool: " + e.getMessage());
-                }
-                jedisPool = null;
-            }
-
-            isInitialized.set(false);
-            logger.info("Redis client shutdown completed.");
-        }).exceptionally(ex -> {
-            logger.severe("Exception during Redis client shutdown sequence: " + ex.getMessage());
-            ex.printStackTrace();
-            isShuttingDown.set(true);
-            isInitialized.set(false);
-            if (jedisPool != null && !jedisPool.isClosed()) {
-                try { jedisPool.close(); } catch (Exception e) { /* ignore */ }
-            }
-            jedisPool = null;
-            this.playerAPI = null;
-            return null;
-        });
-    }
-
-    public String getHost() {
-        return host;
-    }
-
-    public int getPort() {
-        return port;
-    }
-
-    private <T> CompletableFuture<T> trackTask(CompletableFuture<T> future) {
-        if (isShuttingDown.get() || !isInitialized.get()) {
-            future.cancel(true);
-            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient is shutting down or not initialized. Task cancelled."));
+    public CompletableFuture<Void> cleanupServerAsync(String serverName) {
+        if (!isFunctional()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready for cleanup."));
         }
-        activeTasks.add(future);
-        return future.whenComplete((result, ex) -> {
-            activeTasks.remove(future);
-            if (ex != null && !(ex instanceof CancellationException)) {
-                logger.severe("Tracked task failed with error: " + ex.getMessage());
+        return trackTask(CompletableFuture.runAsync(() -> {
+            try (Jedis jedis = jedisPool.getResource()) {
+                jedis.del("server:" + serverName);
+                jedis.del("server_status:" + serverName);
+                logger.info("Cleaned up Redis keys for server: " + serverName);
+            } catch (Exception e) {
+                logger.severe("Error cleaning up server keys for " + serverName + ": " + e.getMessage());
+                throw new CompletionException(e);
             }
-        });
+        }));
+    }
+
+    public CompletableFuture<Boolean> isServerOnline(String serverName) {
+        if (playerAPI == null || !isFunctional()) {
+            return CompletableFuture.completedFuture(false);
+        }
+        return playerAPI.isServerOnline(serverName);
+    }
+
+    public CompletableFuture<Set<String>> getOnlinePlayersAsync() {
+        if (playerAPI == null || !isFunctional()) {
+            return CompletableFuture.completedFuture(new HashSet<>());
+        }
+        return playerAPI.getOnlinePlayersAsync();
+    }
+
+    public CompletableFuture<Set<String>> getServerPlayersAsync(String serverName) {
+        if (playerAPI == null || !isFunctional()) {
+            return CompletableFuture.completedFuture(new HashSet<>());
+        }
+        return playerAPI.getServerPlayersAsync(serverName);
+    }
+
+    public CompletableFuture<String> getPlayerServerAsync(String uuid) {
+        if (playerAPI == null || !isFunctional()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return playerAPI.getPlayerServerAsync(uuid);
     }
 
     private JedisPubSub createPubSub() {
@@ -418,7 +660,19 @@ public class RedisClient {
     }
 
     private void processMessage(String message) {
-        if (isShuttingDown.get() || !isInitialized.get() || scheduler == null || plugin == null) {
+        if (isShuttingDown.get() || !isInitialized.get() || scheduler == null || RedisClient.plugin == null) {
+            return;
+        }
+        boolean pluginEnabled = true;
+        try {
+            if (RedisClient.plugin instanceof org.bukkit.plugin.java.JavaPlugin) {
+                pluginEnabled = ((org.bukkit.plugin.java.JavaPlugin) RedisClient.plugin).isEnabled();
+            }
+        } catch (Exception e) {
+            logger.warning("Could not determine plugin enabled state: " + e.getMessage());
+        }
+
+        if (!pluginEnabled) {
             return;
         }
         try {
@@ -445,15 +699,6 @@ public class RedisClient {
             for (NetworkEventListener listener : listenersCopy) {
                 if (isShuttingDown.get()) break;
                 try {
-                    boolean isBukkitPlugin = false;
-                    try {
-                        Class.forName("org.bukkit.plugin.Plugin");
-                        isBukkitPlugin = plugin instanceof org.bukkit.plugin.Plugin;
-                    } catch (ClassNotFoundException ignored) {}
-
-                    if (isBukkitPlugin && !((org.bukkit.plugin.Plugin) plugin).isEnabled()) {
-                        continue;
-                    }
                     scheduler.executePlatformEvent(listener, type, id, name, fromServer, toServer);
                 } catch (Exception e) {
                     logger.warning("Error in event listener while processing message: " + e.getMessage());
@@ -484,185 +729,11 @@ public class RedisClient {
         return this.jedisPool;
     }
 
-    public CompletableFuture<Void> publishNetworkJoin(String uuid, String playerName, String serverName) {
-        if (isShuttingDown.get() || !isInitialized.get() || jedisPool == null || jedisPool.isClosed()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
-        }
-        return trackTask(CompletableFuture.runAsync(() -> {
-            try (Jedis jedis = jedisPool.getResource()) {
-                jedis.sadd("online_players", uuid);
-                jedis.sadd("server:" + serverName, uuid);
-                jedis.expire("server:" + serverName, 60);
-                String message = String.format("%s:%s:%s:%s:%s", NetworkEventType.NETWORK_JOIN, uuid, playerName, "null", serverName);
-                jedis.publish("network-events", message);
-            } catch (Exception e) {
-                logger.severe("Error publishing network join for " + playerName + ": " + e.getMessage());
-                throw new CompletionException(e);
-            }
-        }));
+    public String getHost() {
+        return host;
     }
 
-    public CompletableFuture<Void> publishNetworkQuit(String uuid, String playerName, String serverName) {
-        if (isShuttingDown.get() || !isInitialized.get() || jedisPool == null || jedisPool.isClosed()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
-        }
-        return trackTask(removePlayerAsync(uuid, serverName)
-                .thenComposeAsync(v -> {
-                    if (jedisPool == null || jedisPool.isClosed()) {
-                        return CompletableFuture.failedFuture(new IllegalStateException("JedisPool closed during operation"));
-                    }
-                    return CompletableFuture.runAsync(() -> {
-                        try (Jedis jedis = jedisPool.getResource()) {
-                            if (!jedis.sismember("online_players", uuid)) {
-                                String message = String.format("%s:%s:%s:%s:%s", NetworkEventType.NETWORK_QUIT, uuid, playerName, serverName, "null");
-                                jedis.publish("network-events", message);
-                            }
-                        } catch (Exception e) {
-                            logger.severe("Error publishing network quit for " + playerName + ": " + e.getMessage());
-                            throw new CompletionException(e);
-                        }
-                    }, ForkJoinPool.commonPool());
-                })
-                .exceptionally(e -> {
-                    logger.severe("Error in publishNetworkQuit chain for " + playerName + ": " + e.getMessage());
-                    if (e instanceof CompletionException && e.getCause() != null) {
-                        throw (CompletionException)e;
-                    }
-                    throw new CompletionException(e);
-                }));
-    }
-
-    public CompletableFuture<Void> publishServerSwitch(String uuid, String playerName, String fromServer, String toServer) {
-        if (isShuttingDown.get() || !isInitialized.get() || jedisPool == null || jedisPool.isClosed()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
-        }
-        return trackTask(CompletableFuture.runAsync(() -> {
-            try (Jedis jedis = jedisPool.getResource()) {
-                String message = String.format("%s:%s:%s:%s:%s", NetworkEventType.SERVER_SWITCH, uuid, playerName, fromServer, toServer);
-                jedis.publish("network-events", message);
-            } catch (Exception e) {
-                logger.severe("Error publishing server switch for " + playerName + ": " + e.getMessage());
-                throw new CompletionException(e);
-            }
-        }));
-    }
-
-    public CompletableFuture<Void> publishNetworkServerStart(String serverName) {
-        if (isShuttingDown.get() || !isInitialized.get() || jedisPool == null || jedisPool.isClosed()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
-        }
-        return trackTask(
-                updateServerStatus(serverName)
-                        .thenComposeAsync(voidResult -> {
-                            if (isShuttingDown.get() || !isInitialized.get() || jedisPool == null || jedisPool.isClosed()) {
-                                return CompletableFuture.failedFuture(new IllegalStateException("RedisClient became unready during operation."));
-                            }
-                            return CompletableFuture.runAsync(() -> {
-                                try (Jedis jedis = jedisPool.getResource()) {
-                                    String message = String.format("%s:%s:%s:%s:%s", NetworkEventType.NETWORK_SERVER_START, serverName, "null", "null", "null");
-                                    jedis.publish("network-events", message);
-                                    logger.info("Published network server start event for: " + serverName);
-                                } catch (Exception e) {
-                                    logger.severe("Error publishing network server start for " + serverName + " after status update: " + e.getMessage());
-                                    throw new CompletionException(e);
-                                }
-                            }, ForkJoinPool.commonPool());
-                        })
-                        .exceptionally(e -> {
-                            logger.severe("Error in publishNetworkServerStart chain for " + serverName + ": " + e.getMessage());
-                            if (e instanceof CompletionException && e.getCause() != null) {
-                                throw (CompletionException)e;
-                            }
-                            throw new CompletionException(e);
-                        })
-        );
-    }
-
-    public CompletableFuture<Void> publishNetworkServerShutdown(String serverName) {
-        if (isShuttingDown.get() || !isInitialized.get() || jedisPool == null || jedisPool.isClosed()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
-        }
-        return trackTask(CompletableFuture.runAsync(() -> {
-            try (Jedis jedis = jedisPool.getResource()) {
-                String message = String.format("%s:%s:%s:%s:%s", NetworkEventType.NETWORK_SERVER_SHUTDOWN, serverName, "null", "null", "null");
-                jedis.publish("network-events", message);
-                logger.info("Published network server shutdown event for: " + serverName);
-            } catch (Exception e) {
-                logger.severe("Error publishing network server shutdown for " + serverName + ": " + e.getMessage());
-                throw new CompletionException(e);
-            }
-        }));
-    }
-
-    public CompletableFuture<Void> addPlayerAsync(String uuid, String serverName) {
-        if (isShuttingDown.get() || !isInitialized.get() || jedisPool == null || jedisPool.isClosed()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
-        }
-        return trackTask(CompletableFuture.runAsync(() -> {
-            try (Jedis jedis = jedisPool.getResource()) {
-                jedis.sadd("online_players", uuid);
-                jedis.sadd("server:" + serverName, uuid);
-                jedis.expire("server:" + serverName, 300);
-                jedis.expire("online_players", 300);
-            } catch (Exception e) {
-                logger.severe("Error adding player " + uuid + " to Redis for server " + serverName + ": " + e.getMessage());
-                throw new CompletionException(e);
-            }
-        }));
-    }
-
-    public CompletableFuture<Void> removePlayerAsync(String uuid, String serverName) {
-        if (isShuttingDown.get() || !isInitialized.get() || jedisPool == null || jedisPool.isClosed()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready."));
-        }
-        return trackTask(CompletableFuture.runAsync(() -> {
-            try (Jedis jedis = jedisPool.getResource()) {
-                jedis.srem("online_players", uuid);
-                jedis.srem("server:" + serverName, uuid);
-            } catch (Exception e) {
-                logger.severe("Error removing player " + uuid + " from Redis for server " + serverName + ": " + e.getMessage());
-                throw new CompletionException(e);
-            }
-        }));
-    }
-
-    public CompletableFuture<Boolean> isServerOnline(String serverName) {
-        if (playerAPI == null) return CompletableFuture.completedFuture(false);
-        return playerAPI.isServerOnline(serverName);
-    }
-
-    public CompletableFuture<Set<String>> getOnlinePlayersAsync() {
-        if (playerAPI == null) return CompletableFuture.completedFuture(new HashSet<>());
-        return playerAPI.getOnlinePlayersAsync();
-    }
-
-    public CompletableFuture<Set<String>> getServerPlayersAsync(String serverName) {
-        if (playerAPI == null) return CompletableFuture.completedFuture(new HashSet<>());
-        return playerAPI.getServerPlayersAsync(serverName);
-    }
-
-    public CompletableFuture<String> getPlayerServerAsync(String uuid) {
-        if (playerAPI == null) return CompletableFuture.completedFuture(null);
-        return playerAPI.getPlayerServerAsync(uuid);
-    }
-
-    public CompletableFuture<Void> cleanupServerAsync(String serverName) {
-        if (isShuttingDown.get() || !isInitialized.get() || jedisPool == null || jedisPool.isClosed()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("RedisClient not ready for cleanup."));
-        }
-        return CompletableFuture.runAsync(() -> {
-            try (Jedis jedis = jedisPool.getResource()) {
-                jedis.del("server:" + serverName);
-                jedis.del("server_status:" + serverName);
-                logger.info("Cleaned up Redis keys for server: " + serverName);
-            } catch (Exception e) {
-                logger.severe("Error cleaning up server keys for " + serverName + ": " + e.getMessage());
-                throw new CompletionException(e);
-            }
-        });
-    }
-
-    public boolean isFunctional() {
-        return isInitialized.get() && !isShuttingDown.get() && jedisPool != null && !jedisPool.isClosed();
+    public int getPort() {
+        return port;
     }
 }

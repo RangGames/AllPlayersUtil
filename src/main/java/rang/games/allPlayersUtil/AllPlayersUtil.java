@@ -6,7 +6,7 @@ import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
-import rang.games.allPlayersUtil.platform.*;
+import rang.games.allPlayersUtil.platform.PlatformHandler;
 import rang.games.allPlayersUtil.platform.Bukkit.BukkitHandler;
 import rang.games.allPlayersUtil.platform.Bukkit.BukkitSchedulerService;
 import rang.games.allPlayersUtil.platform.Velocity.VelocityHandler;
@@ -19,6 +19,8 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.logging.Logger;
 
 public final class AllPlayersUtil {
@@ -48,28 +50,30 @@ public final class AllPlayersUtil {
 
     @Subscribe
     public void onProxyInitialize(ProxyInitializeEvent event) {
+        this.plugin = this;
         enable();
     }
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
-        disable();
+        logger.info("AllPlayersUtil (Velocity) generic shutdown sequence initiated.");
+        shutdownLogic();
     }
 
-    public void onBukkitEnable(org.bukkit.plugin.java.JavaPlugin plugin) {
-        this.plugin = plugin;
-        this.logger = plugin.getLogger();
-        this.dataDirectory = plugin.getDataFolder().toPath();
+    public void onBukkitEnable(org.bukkit.plugin.java.JavaPlugin bukkitPlugin) {
+        this.plugin = bukkitPlugin;
+        this.logger = bukkitPlugin.getLogger();
+        this.dataDirectory = bukkitPlugin.getDataFolder().toPath();
         enable();
     }
 
-    public void onBukkitDisable(org.bukkit.plugin.java.JavaPlugin plugin) {
-        disable();
+    public void onBukkitDisable() {
+        logger.info("AllPlayersUtil (Bukkit) core shutdown sequence initiated.");
+        shutdownLogic();
     }
 
     private void enable() {
         createDefaultConfig();
-
         Config config = loadConfig();
 
         String redisHost = config.getString("redis.host", "localhost");
@@ -83,57 +87,68 @@ public final class AllPlayersUtil {
 
         RedisClient.initialize(redisHost,
                 redisPort,
-                plugin,
+                this.plugin,
                 isVelocity ?
-                        new VelocitySchedulerService((ProxyServer) proxyServer, plugin) :
-                        new BukkitSchedulerService((org.bukkit.plugin.java.JavaPlugin) plugin));
+                        new VelocitySchedulerService(this.proxyServer, this.plugin) :
+                        new BukkitSchedulerService((org.bukkit.plugin.java.JavaPlugin) this.plugin));
         this.redisClient = RedisClient.getInstance();
+
+        if (this.redisClient == null || !this.redisClient.isFunctional()) {
+            logger.severe("RedisClient failed to initialize or is not functional. AllPlayersUtil features relying on Redis will be unavailable.");
+        }
+
         this.platformHandler = isVelocity ?
-                new VelocityHandler(proxyServer, plugin, logger) :
-                new BukkitHandler((org.bukkit.plugin.java.JavaPlugin) plugin);
-        platformHandler.initialize(redisClient, serverName);
-        platformHandler.registerEvents();
+                new VelocityHandler(this.proxyServer, this.plugin, this.logger) :
+                new BukkitHandler((org.bukkit.plugin.java.JavaPlugin) this.plugin);
+
+        platformHandler.initialize(this.redisClient, serverName);
 
         logger.info("AllPlayersUtil has been enabled!");
     }
 
-
-    private void disable() {
-        if (logger != null) {
-            logger.info("AllPlayersUtil disable sequence initiated by AllPlayersUtil.disable().");
+    private void shutdownLogic() {
+        if (logger == null) {
+            System.out.println("[AllPlayersUtil] Logger not available for shutdown messages.");
+        } else {
+            logger.info("AllPlayersUtil shutdownLogic() initiated.");
         }
-        if (redisClient != null && redisClient.isFunctional()) {
-            Config config = loadConfig();
-            String serverName = config.getString("server.name", "default-server");
-            if (serverName != null && !serverName.equals("default-server")) {
-                if (logger != null) {
-                    logger.info("AllPlayersUtil.disable() is attempting to call cleanupServerAsync for " + serverName);
-                }
-                try {
-                    redisClient.cleanupServerAsync(serverName).exceptionally(throwable -> {
-                        if (logger != null) {
-                            logger.warning("Error during cleanupServerAsync in AllPlayersUtil.disable(): " + throwable.getMessage());
-                        }
-                        return null;
-                    });
-                } catch (Exception e) {
-                    if (logger != null) {
-                        logger.severe("Exception when calling cleanupServerAsync in AllPlayersUtil.disable(): " + e.getMessage());
-                    }
-                }
-            } else {
-                if (logger != null) {
-                    logger.warning("Invalid serverName ('" + serverName + "') from config, skipping cleanupServerAsync in AllPlayersUtil.disable().");
-                }
+
+        if (platformHandler != null) {
+            if (logger!=null) logger.info("Calling platformHandler.disable()...");
+            try {
+                platformHandler.disable();
+                if (logger!=null) logger.info("platformHandler.disable() completed.");
+            } catch (Exception e) {
+                if (logger!=null) logger.severe("Error during platformHandler.disable(): " + e.getMessage());
+                if (logger!=null) e.printStackTrace(); else e.printStackTrace(System.err);
             }
         } else {
-            if (logger != null) {
-                logger.warning("RedisClient is null or not functional in AllPlayersUtil.disable(), skipping cleanupServerAsync.");
+            if (logger!=null) logger.warning("PlatformHandler is null, cannot call disable().");
+        }
+
+        if (redisClient != null) {
+            if (redisClient.isFunctional() || redisClient.isShuttingDown()) {
+                if (logger!=null) logger.info("Calling redisClient.shutdown()...");
+                try {
+                    redisClient.shutdown().get(7, TimeUnit.SECONDS);
+                    if (logger!=null) logger.info("redisClient.shutdown() completed.");
+                } catch (TimeoutException e) {
+                    if (logger!=null) logger.warning("RedisClient shutdown timed out: " + e.getMessage());
+                } catch (InterruptedException e) {
+                    if (logger!=null) logger.warning("RedisClient shutdown was interrupted: " + e.getMessage());
+                    Thread.currentThread().interrupt();
+                } catch (Exception e) {
+                    if (logger!=null) logger.severe("Error during redisClient.shutdown(): " + e.getMessage());
+                    if (logger!=null) e.printStackTrace(); else e.printStackTrace(System.err);
+                }
+            } else {
+                if (logger!=null) logger.warning("RedisClient is not functional and not shutting down, skipping RedisClient.shutdown() call.");
             }
+        } else {
+            if (logger!=null) logger.warning("RedisClient is null, cannot call shutdown().");
         }
-        if (logger != null) {
-            logger.info("AllPlayersUtil.disable() finished its specific tasks.");
-        }
+
+        if (logger!=null) logger.info("AllPlayersUtil shutdownLogic() finished.");
     }
 
     private void createDefaultConfig() {
@@ -167,50 +182,35 @@ public final class AllPlayersUtil {
     }
 
     private Config loadConfig() {
-        return new Config(dataDirectory.resolve("config.yml").toFile());
+        if (isVelocity) {
+            return new Config(dataDirectory.resolve("config.properties").toFile());
+        } else {
+            return new Config(dataDirectory.resolve("config.yml").toFile());
+        }
     }
 
     private static class Config {
         private final Properties properties = new Properties();
         private org.bukkit.configuration.file.YamlConfiguration bukkitConfig;
-        private final boolean isVelocity;
+        private final boolean isVelocityConfig;
 
         public Config(File file) {
-            boolean velocityCheck = false;
-            try {
-                Class.forName(VELOCITY_CLASS);
-                velocityCheck = true;
-            } catch (ClassNotFoundException e) {
-                velocityCheck = false;
-            }
-            this.isVelocity = velocityCheck;
-
-            try {
-                if (this.isVelocity) {
-                    File propsFile = new File(file.getParentFile(), "config.properties");
-                    if (propsFile.exists()) {
-                        try (FileReader reader = new FileReader(propsFile)) {
-                            properties.load(reader);
-                        }
+            if (file.getName().endsWith(".properties")) {
+                isVelocityConfig = true;
+                if (file.exists()) {
+                    try (FileReader reader = new FileReader(file)) {
+                        properties.load(reader);
+                    } catch (IOException e) {
+                        System.err.println("Failed to load properties file: " + file.getAbsolutePath() + " - " + e.getMessage());
                     }
-                } else {
-                    bukkitConfig = org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(file);
                 }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-
-        public boolean isDebugEnabled() {
-            if (isVelocity) {
-                return Boolean.parseBoolean(properties.getProperty("debug", "false"));
             } else {
-                return bukkitConfig.getBoolean("debug", false);
+                isVelocityConfig = false;
+                bukkitConfig = org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(file);
             }
         }
-
         public String getString(String path, String def) {
-            if (isVelocity) {
+            if (isVelocityConfig) {
                 return properties.getProperty(path.replace(".", "_"), def);
             } else {
                 return bukkitConfig.getString(path, def);
@@ -218,7 +218,7 @@ public final class AllPlayersUtil {
         }
 
         public int getInt(String path, int def) {
-            if (isVelocity) {
+            if (isVelocityConfig) {
                 try {
                     return Integer.parseInt(properties.getProperty(path.replace(".", "_"), String.valueOf(def)));
                 } catch (NumberFormatException e) {
@@ -226,23 +226,6 @@ public final class AllPlayersUtil {
                 }
             } else {
                 return bukkitConfig.getInt(path, def);
-            }
-        }
-    }
-
-    public static final class BukkitMain extends org.bukkit.plugin.java.JavaPlugin {
-        private AllPlayersUtil plugin;
-
-        @Override
-        public void onEnable() {
-            plugin = new AllPlayersUtil();
-            plugin.onBukkitEnable(this);
-        }
-
-        @Override
-        public void onDisable() {
-            if (plugin != null) {
-                plugin.onBukkitDisable(this);
             }
         }
     }
