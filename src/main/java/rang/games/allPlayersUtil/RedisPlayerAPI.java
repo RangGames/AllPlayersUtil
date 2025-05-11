@@ -38,57 +38,16 @@ public class RedisPlayerAPI {
         }
     }
 
-
     /**
-     * 현재 네트워크의 모든 온라인 플레이어 UUID를 가져옵니다.
+     * Asynchronously retrieves the UUIDs of all online players across the network.
+     * It iterates through all Redis keys matching the "server:*" pattern (excluding the
+     * Velocity proxy's own server key, if defined by `velocityServerName`), and aggregates
+     * the player UUIDs stored in those server-specific sets.
      *
-     * @return CompletableFuture<Set < String>> - 온라인 플레이어 UUID 세트
+     * @return A {@code CompletableFuture<Set<String>>} that, upon completion, will contain a set
+     *         of all online player UUIDs. If an error occurs during the Redis operation,
+     *         an empty set is returned, and the error is logged.
      */
-/*    public CompletableFuture<Set<String>> getOnlinePlayersAsync() {
-        return CompletableFuture.supplyAsync(() -> {
-            try (Jedis jedis = jedisPool.getResource()) {
-                Set<String> players = jedis.smembers("online_players");
-                if (players == null || players.isEmpty()) {
-                    Set<String> allPlayers = new HashSet<>();
-                    Set<String> serverKeys = jedis.keys("server:*");
-                    for (String serverKey : serverKeys) {
-                        allPlayers.addAll(jedis.smembers(serverKey));
-                    }
-                    if (!allPlayers.isEmpty()) {
-                        String[] playerArray = allPlayers.toArray(new String[0]);
-                        jedis.sadd("online_players", playerArray);
-                        jedis.expire("online_players", 300);
-                    }
-                    return allPlayers;
-                }
-                return players;
-            } catch (Exception e) {
-                logger.severe("§cError fetching online players: " + e.getMessage());
-                e.printStackTrace();
-                return new HashSet<>();
-            }
-        });
-    }*/
-    public CompletableFuture<Boolean> isServerOnline(String serverName) {
-        return CompletableFuture.supplyAsync(() -> {
-            try (Jedis jedis = jedisPool.getResource()) {
-                String key = "server_status:" + serverName;
-                String status = jedis.get(key);
-                if ("online".equals(status)) {
-                    long ttl = jedis.ttl(key);
-                    if (ttl <= 0) {
-                        return false; // status key exists but has no TTL, considering offline
-                    }
-                    return true;
-                }
-                return false;
-            } catch (Exception e) {
-                logger.severe("Error checking server status: " + e.getMessage());
-                return false;
-            }
-        });
-    }
-
     public CompletableFuture<Set<String>> getOnlinePlayersAsync() {
         return CompletableFuture.supplyAsync(() -> {
             try (Jedis jedis = jedisPool.getResource()) {
@@ -115,10 +74,42 @@ public class RedisPlayerAPI {
     }
 
     /**
-     * 특정 서버의 모든 플레이어 UUID를 가져옵니다.
+     * Asynchronously checks if a specific game server is currently marked as online in Redis.
+     * It looks for a key "server_status:{serverName}" with the value "online" and a positive TTL.
      *
-     * @param serverName 서버 이름
-     * @return CompletableFuture<Set < String>> - 해당 서버의 플레이어 UUID 세트
+     * @param serverName The name of the server to check.
+     * @return A {@code CompletableFuture<Boolean>} that, upon completion, will be {@code true}
+     *         if the server is considered online (status key exists, value is "online", and TTL > 0),
+     *         and {@code false} otherwise or if an error occurs.
+     */
+    public CompletableFuture<Boolean> isServerOnline(String serverName) {
+        return CompletableFuture.supplyAsync(() -> {
+            try (Jedis jedis = jedisPool.getResource()) {
+                String key = "server_status:" + serverName;
+                String status = jedis.get(key);
+                if ("online".equals(status)) {
+                    long ttl = jedis.ttl(key);
+                    if (ttl <= 0) {
+                        return false; // status key exists but has no TTL, considering offline
+                    }
+                    return true;
+                }
+                return false;
+            } catch (Exception e) {
+                logger.severe("Error checking server status: " + e.getMessage());
+                return false;
+            }
+        });
+    }
+
+    /**
+     * Asynchronously retrieves the UUIDs of all players currently on a specific game server.
+     * It fetches members from the Redis set stored at "server:{serverName}".
+     *
+     * @param serverName The name of the server for which to retrieve player UUIDs.
+     * @return A {@code CompletableFuture<Set<String>>} that, upon completion, will contain a set
+     *         of player UUIDs on the specified server. If the server does not exist or an
+     *         error occurs, an empty set is returned.
      */
     public CompletableFuture<Set<String>> getServerPlayersAsync(String serverName) {
         return CompletableFuture.supplyAsync(() -> {
@@ -132,10 +123,15 @@ public class RedisPlayerAPI {
     }
 
     /**
-     * 특정 플레이어의 현재 서버를 가져옵니다.
+     * Asynchronously determines the current game server a specific player is on.
+     * It iterates through all Redis keys matching "server:*" (excluding the Velocity proxy's
+     * own server key) and checks if the player's UUID is a member of that server's player set.
      *
-     * @param uuid 플레이어 UUID
-     * @return CompletableFuture<String> - 서버 이름 (없으면 null)
+     * @param uuid The UUID of the player whose server is to be found.
+     * @return A {@code CompletableFuture<String>} that, upon completion, will contain the
+     *         name of the server the player is on. If the player is not found on any
+     *         server or an error occurs, it completes with {@code null}.
+     *         The server name is derived by removing the "server:" prefix from the Redis key.
      */
     public CompletableFuture<String> getPlayerServerAsync(String uuid) {
         return CompletableFuture.supplyAsync(() -> {
