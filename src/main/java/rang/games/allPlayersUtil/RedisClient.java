@@ -72,7 +72,7 @@ public class RedisClient {
         poolConfig.setMaxIdle(10);
         poolConfig.setMinIdle(2);
         poolConfig.setTestOnBorrow(true);
-        poolConfig.setTestOnReturn(true);
+        //poolConfig.setTestOnReturn(true);
         poolConfig.setTestWhileIdle(true);
         poolConfig.setMinEvictableIdleTimeMillis(TimeUnit.SECONDS.toMillis(60));
         poolConfig.setTimeBetweenEvictionRunsMillis(TimeUnit.SECONDS.toMillis(30));
@@ -663,13 +663,37 @@ public class RedisClient {
         if (isShuttingDown.get() || !isInitialized.get() || scheduler == null || RedisClient.plugin == null) {
             return;
         }
+
         boolean pluginEnabled = true;
+        boolean isBukkit = false;
+        boolean isVelocity = false;
+
         try {
+            Class.forName("org.bukkit.plugin.java.JavaPlugin");
             if (RedisClient.plugin instanceof org.bukkit.plugin.java.JavaPlugin) {
-                pluginEnabled = ((org.bukkit.plugin.java.JavaPlugin) RedisClient.plugin).isEnabled();
+                isBukkit = true;
             }
-        } catch (Exception e) {
-            logger.warning("Could not determine plugin enabled state: " + e.getMessage());
+        } catch (ClassNotFoundException ignored) {}
+
+        if (!isBukkit) {
+            try {
+                Class.forName("com.velocitypowered.api.plugin.PluginContainer");
+                isVelocity = true;
+            } catch (ClassNotFoundException ignored) {
+            }
+        }
+
+        if (isBukkit) {
+            try {
+                pluginEnabled = ((org.bukkit.plugin.java.JavaPlugin) RedisClient.plugin).isEnabled();
+            } catch (Exception e) {
+                logger.warning("Could not determine Bukkit plugin enabled state: " + e.getMessage());
+                pluginEnabled = false;
+            }
+        } else if (isVelocity) {
+            pluginEnabled = true;
+        } else {
+            logger.warning("Unknown platform for plugin instance. Assuming enabled.");
         }
 
         if (!pluginEnabled) {
