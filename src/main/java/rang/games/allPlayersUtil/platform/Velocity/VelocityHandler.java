@@ -138,7 +138,6 @@ public class VelocityHandler implements PlatformHandler {
                 });
             }
         }
-
         if (this.redisClient != null) {
             this.redisClient.addPlayerAsync(uuid, toServer).thenRun(() -> {
                 if (event.getPreviousServer().isPresent()) {
@@ -147,14 +146,11 @@ public class VelocityHandler implements PlatformHandler {
                         //this.logger.info("§aPlayer " + name + " moved from " + fromServer + " to " + toServer);
                     });
                 }
-
             }).exceptionally((throwable) -> {
                 this.logger.severe("§cError updating player location: " + throwable.getMessage());
                 return null;
             });
         }
-
-
     }
 
     @Override

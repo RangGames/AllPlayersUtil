@@ -44,7 +44,7 @@ redis:
 
 server:
   # The unique name of THIS Bukkit server.
-  # Examples: "lobby", "survival-1", "minigame-hub"
+  # Examples: "lobby", "survival", "minigame-hub"
   name: "example-server" # MUST BE UNIQUE for each Bukkit server
 
 debug: false
@@ -88,7 +88,7 @@ These settings tell the plugin how to connect to your Redis server. **They must 
 This setting identifies the current server instance within the network.
 
 *   **Bukkit (`config.yml` -> `server.name`):**
-    *   Set `server.name` to a **unique identifier** for that specific Bukkit server (e.g., `"lobby"`, `"survival-1"`, `"skyblock1"`).
+    *   Set `server.name` to a **unique identifier** for that specific Bukkit server (e.g., `"lobby"`, `"survival"`, `"skyblock1"`).
     *   This name is used in Redis keys like `server:<serverName>` and `server_status:<serverName>`.
     *   **This name MUST be unique across all your Bukkit servers.** Do not use "proxy" here.
 
@@ -182,7 +182,7 @@ Asynchronously checks if a specific game server is currently marked as online in
 *   **Purpose:** To determine if a game server with the given name is currently active and reporting its status.
 *   **Signature:** `public CompletableFuture<Boolean> isServerOnline(String serverName)`
 *   **Parameters:**
-    *   `serverName` (String): The name of the server to check. This name must match the `server.name` configured in the `AllPlayersUtil` plugin's `config.yml` on that specific Bukkit server (e.g., "lobby", "survival-1").
+    *   `serverName` (String): The name of the server to check. This name must match the `server.name` configured in the `AllPlayersUtil` plugin's `config.yml` on that specific Bukkit server (e.g., "lobby", "survival").
 *   **Returns:** `CompletableFuture<Boolean>`
     *   **On success:**
         *   `true`: If the Redis key `server_status:<serverName>` exists, its value is `"online"`, and it has a positive TTL (Time-To-Live).
@@ -196,7 +196,7 @@ Asynchronously checks if a specific game server is currently marked as online in
 
     ```java
     RedisPlayerAPI api = RedisPlayerAPI.getInstance();
-    String targetServer = "survival-1"; // This should be a 'server.name' from a Bukkit config
+    String targetServer = "survival"; // This should be a 'server.name' from a Bukkit config
     api.isServerOnline(targetServer).thenAccept(isOnline -> {
         if (isOnline) {
             getLogger().info(targetServer + " server is currently online.");
@@ -276,7 +276,7 @@ Asynchronously determines the current game server a specific player (by UUID) is
 The `AllPlayersUtil` plugin uses the following data structures in Redis. API users generally do not need to interact with these directly, but understanding them can help in comprehending how the API works.
 
 1.  **Player Lists (Per Server):**
-    *   **Key Format:** `server:<serverName>` (e.g., `server:lobby`, `server:survival-1`)
+    *   **Key Format:** `server:<serverName>` (e.g., `server:lobby`, `server:survival`)
         *   `<serverName>` is the value of `server.name` (from Bukkit's `config.yml`) or `server_name` (from Velocity's `config.properties`).
     *   **Type:** Redis `Set`
     *   **Value:** A set of strings, where each string is a player's UUID.
